@@ -2,6 +2,7 @@
 ELVTR Weekly Schedule Generator — Streamlit app
 """
 import io
+import re
 import base64
 import uuid
 import streamlit as st
@@ -90,13 +91,14 @@ def _preview_html(img) -> str:
 SCHEMES = ["Purple", "Blue", "Green", "Grayscale"]
 
 for _k, _v in [
-    ("events",     {d: [] for d in DAYS}),
-    ("course",     ""),
-    ("instructor", ""),
-    ("channel",    "#help"),
-    ("week_start", None),
-    ("week_end",   None),
-    ("scheme",     "Purple"),
+    ("events",      {d: [] for d in DAYS}),
+    ("course",      ""),
+    ("instructor",  ""),
+    ("channel",     "#help"),
+    ("footer_line", ""),
+    ("week_start",  None),
+    ("week_end",    None),
+    ("scheme",      "Purple"),
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -128,6 +130,12 @@ with left:
     st.session_state.channel = st.text_input(
         "Discord help channel", value=st.session_state.channel,
         placeholder="e.g. #help", key="inp_channel",
+    )
+    st.session_state.footer_line = st.text_input(
+        "Footer text (optional)",
+        value=st.session_state.footer_line,
+        placeholder="Leave blank to auto-generate from channel name",
+        key="inp_footer",
     )
 
     st.markdown("---")
@@ -164,6 +172,10 @@ with left:
         st.session_state.week_start = raw_start
     if raw_end and raw_end != st.session_state.week_end:
         st.session_state.week_end = raw_end
+
+    ws, we = st.session_state.week_start, st.session_state.week_end
+    if ws and we and we < ws:
+        st.warning("End date is before start date.")
 
     st.markdown("---")
     st.markdown("### Schedule")
@@ -212,8 +224,8 @@ with left:
                 if new_type != ev["type"]:
                     ev["type"] = new_type
                     if new_type == "office" and not st.session_state.get(f"title_{eid}", "").strip():
-                        first = (st.session_state.instructor or "Instructor").split()[0]
-                        # Set the widget key directly so the input reflects it
+                        _parts = (st.session_state.instructor or "").split()
+                        first  = _parts[0] if _parts else "Instructor"
                         st.session_state[f"title_{eid}"] = f"Open Q&A with {first}"
 
                 etype = ev["type"]
@@ -357,12 +369,13 @@ with right:
                 })
             days_data[d] = evs
         return {
-            "name":       st.session_state.course,
-            "instructor": st.session_state.instructor,
-            "channel":    st.session_state.channel,
-            "weekStart":  ws.isoformat() if ws else "",
-            "weekEnd":    we.isoformat() if we else "",
-            "days":       days_data,
+            "name":        st.session_state.course,
+            "instructor":  st.session_state.instructor,
+            "channel":     st.session_state.channel,
+            "footerLine":  st.session_state.footer_line,
+            "weekStart":   ws.isoformat() if ws else "",
+            "weekEnd":     we.isoformat() if we else "",
+            "days":        days_data,
         }
 
     graphic_data = _build_data()
@@ -385,7 +398,9 @@ with right:
         hi_res.save(buf, format="PNG", optimize=True)
         buf.seek(0)
 
-        slug     = (graphic_data["name"] or "schedule").lower().replace(" ", "-")
+        slug     = re.sub(r"[^\w\-]", "-",
+                         (graphic_data["name"] or "schedule").lower().replace(" ", "-"))
+        slug     = re.sub(r"-{2,}", "-", slug).strip("-") or "schedule"
         week     = graphic_data["weekStart"] or "week"
         filename = f"elvtr-{slug}-{week}.png"
 
