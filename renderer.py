@@ -230,10 +230,19 @@ def _wrap(text: str, font, max_w: int, draw) -> list[str]:
 def _lh(draw, font) -> int:
     return draw.textbbox((0, 0), "Ay", font=font)[3]
 
-def _draw_wrapped(draw, text, xy, font, fill, max_w) -> int:
+def _draw_wrapped(draw, text, xy, font, fill, max_w, max_lines: int = 0) -> int:
+    """Draw wrapped text; if max_lines > 0, truncate with ellipsis."""
     x, y = xy
     h = _lh(draw, font)
-    for line in _wrap(text, font, max_w, draw):
+    lines = _wrap(text, font, max_w, draw)
+    if max_lines and len(lines) > max_lines:
+        # Truncate last allowed line with ellipsis
+        lines = lines[:max_lines]
+        last = lines[-1]
+        while last and draw.textlength(last + "...", font=font) > max_w:
+            last = last[:-1]
+        lines[-1] = last + "..."
+    for line in lines:
         draw.text((x, y), line, font=font, fill=fill)
         y += h
     return y
@@ -266,9 +275,20 @@ def _event_h(ev: dict, draw, cw: int, s: int) -> int:
     h += _lh(draw, fnt(13, "bold",    s)) * len(    # title lines
             _wrap(ev.get("title") or "-", fnt(13, "bold", s), cw - indent, draw))
     h += 3 * s
-    # class tag pills row (Guest Speaker / Workshop / Case Study)
+    # class tag pills (may wrap to multiple rows)
     if ev.get("type") == "class" and ev.get("tags"):
-        h += _lh(draw, fnt(9, "bold", s)) + 4 * s + 5 * s   # pill height + margin
+        f9b = fnt(9, "bold", s)
+        pill_row_h = _lh(draw, f9b) + 4 * s  # single row height
+        pill_gap   = 5 * s
+        tx, rows   = 0, 1
+        for tag in ev["tags"]:
+            pw = int(draw.textlength(tag, font=f9b)) + 12 * s + pill_gap
+            if tx > 0 and tx + pw > cw - indent:
+                rows += 1
+                tx = pw
+            else:
+                tx += pw
+        h += rows * pill_row_h + 5 * s  # rows + bottom margin
     if ev.get("type") == "holiday" and ev.get("note"):
         h += _lh(draw, fnt(11, "italic", s)) + 2 * s
     has_time = (ev.get("timePT") or ev.get("timeET") or
@@ -323,17 +343,27 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
 
     # ── Class tag pills (Guest Speaker / Workshop / Case Study) ───────────
     if slug == "class" and ev.get("tags"):
-        f9b  = fnt(9, "bold", s)
-        lh9  = _lh(draw, f9b)
-        py   = 2 * s
-        tx   = cx + indent
-        pill_bg  = (83, 74, 183, 22)   # class purple at ~8% opacity
-        pill_bd  = (83, 74, 183)
-        pill_txt = (83, 74, 183)
+        f9b      = fnt(9, "bold", s)
+        lh9      = _lh(draw, f9b)
+        row_h    = lh9 + 4 * s        # text + vertical padding
+        py       = 2 * s
+        pill_gap = 5 * s
+        # Derive pill colours from the scheme's class label colour
+        base_rgb = c.get("lbl_class", (83, 74, 183))
+        pill_bg  = (*base_rgb, 22)
+        pill_bd  = base_rgb
+        pill_txt = base_rgb
+        tx = cx + indent
+        row_start_cy = cy
         for tag in ev["tags"]:
+            pw = int(draw.textlength(tag, font=f9b)) + 12 * s + pill_gap
+            # Wrap to next row if this pill doesn't fit
+            if tx > cx + indent and tx + pw - pill_gap > cx + cw:
+                cy  += row_h
+                tx   = cx + indent
             tx = _badge(draw, img, tag, (tx, cy + py),
-                        f9b, pill_bg, pill_bd, pill_txt, 10 * s, s) + 5 * s
-        cy += lh9 + py * 2 + 5 * s
+                        f9b, pill_bg, pill_bd, pill_txt, 10 * s, s) + pill_gap
+        cy += row_h + 5 * s   # final row height + bottom margin
 
     # ── Holiday note ──────────────────────────────────────────────────────
     if slug == "holiday" and ev.get("note"):
@@ -416,7 +446,8 @@ def render_graphic(data: dict, scale: int = 1, scheme: str = "Purple") -> Image.
     draw.text((24 * s, y), "ELVTR", font=fnt(10, "bold", s), fill=c["elvtr_lbl"])
     y += _lh(draw, fnt(10, "bold", s)) + 7 * s
     y = _draw_wrapped(draw, data.get("name") or "Course Name",
-                      (24 * s, y), fnt(17, "bold", s), c["course_col"], W - 48 * s)
+                      (24 * s, y), fnt(17, "bold", s), c["course_col"],
+                      W - 48 * s, max_lines=2)
     y += 4 * s
     draw.text((24 * s, y),
               f"Instructor: {data.get('instructor') or '-'}",
@@ -489,8 +520,10 @@ def render_graphic(data: dict, scale: int = 1, scheme: str = "Purple") -> Image.
     # ── Footer ───────────────────────────────────────────────────────────
     foot_y = total_H - footer_h
     draw.rectangle([0, foot_y, W, total_H], fill=c["footer_bg"])
-    channel = data.get("channel") or "#help"
-    foot_txt = f"Posted every Monday  ·  Questions? Drop them in {channel}"
+    foot_txt = (data.get("footerLine") or "").strip()
+    if not foot_txt:
+        channel  = data.get("channel") or "#help"
+        foot_txt = f"Posted every Monday  ·  Questions? Drop them in {channel}"
     fw  = draw.textlength(foot_txt, font=fnt(10, "regular", s))
     ft_h = _lh(draw, fnt(10, "regular", s))
     draw.text(((W - fw) // 2, foot_y + (footer_h - ft_h) // 2),
