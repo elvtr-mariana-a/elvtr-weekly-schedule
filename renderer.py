@@ -266,6 +266,9 @@ def _event_h(ev: dict, draw, cw: int, s: int) -> int:
     h += _lh(draw, fnt(13, "bold",    s)) * len(    # title lines
             _wrap(ev.get("title") or "-", fnt(13, "bold", s), cw - indent, draw))
     h += 3 * s
+    # class tag pills row (Guest Speaker / Workshop / Case Study)
+    if ev.get("type") == "class" and ev.get("tags"):
+        h += _lh(draw, fnt(9, "bold", s)) + 4 * s + 5 * s   # pill height + margin
     if ev.get("type") == "holiday" and ev.get("note"):
         h += _lh(draw, fnt(11, "italic", s)) + 2 * s
     has_time = (ev.get("timePT") or ev.get("timeET") or
@@ -317,6 +320,20 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
         draw.text((cx + indent, cy), line, font=f13b, fill=c["title"])
         cy += lh13
     cy += 3 * s
+
+    # ── Class tag pills (Guest Speaker / Workshop / Case Study) ───────────
+    if slug == "class" and ev.get("tags"):
+        f9b  = fnt(9, "bold", s)
+        lh9  = _lh(draw, f9b)
+        py   = 2 * s
+        tx   = cx + indent
+        pill_bg  = (83, 74, 183, 22)   # class purple at ~8% opacity
+        pill_bd  = (83, 74, 183)
+        pill_txt = (83, 74, 183)
+        for tag in ev["tags"]:
+            tx = _badge(draw, img, tag, (tx, cy + py),
+                        f9b, pill_bg, pill_bd, pill_txt, 10 * s, s) + 5 * s
+        cy += lh9 + py * 2 + 5 * s
 
     # ── Holiday note ──────────────────────────────────────────────────────
     if slug == "holiday" and ev.get("note"):
