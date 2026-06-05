@@ -42,12 +42,15 @@ TYPE_LABELS = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+CLASS_TAGS = ["Guest Speaker", "Workshop", "Case Study"]
+
 def _blank_event(etype: str = "class") -> dict:
     return {
         "id":           str(uuid.uuid4()),
         "type":         etype,
         "title":        "",
         "classNum":     "",
+        "tags":         [],        # class-only: Guest Speaker / Workshop / Case Study
         "officeTiming": "before",
         "extraCredit":  False,
         "ungraded":     False,
@@ -223,12 +226,33 @@ with left:
                     key=f"title_{eid}",
                 )
 
-                # ── Class # ─────────────────────────────────────────────
+                # ── Class # + tags ──────────────────────────────────────
                 if etype == "class":
                     ev["classNum"] = st.text_input(
                         "Class #", placeholder="e.g. 5",
                         key=f"cls_{eid}",
                     )
+                    st.markdown(
+                        "<span style='font-size:12px;color:#8884aa'>Session type</span>",
+                        unsafe_allow_html=True,
+                    )
+                    current_tags = ev.get("tags", [])
+                    tag_cols = st.columns(3)
+                    for ci, tag in enumerate(CLASS_TAGS):
+                        with tag_cols[ci]:
+                            is_on = tag in current_tags
+                            if st.button(
+                                tag,
+                                key=f"tag_{eid}_{ci}",
+                                type="primary" if is_on else "secondary",
+                            ):
+                                tags = list(current_tags)
+                                if tag in tags:
+                                    tags.remove(tag)
+                                else:
+                                    tags.append(tag)
+                                ev["tags"] = tags
+                                st.rerun()
 
                 # ── Office timing ────────────────────────────────────────
                 if etype == "office":
@@ -329,6 +353,7 @@ with right:
                     "note":     st.session_state.get(f"note_{eid}",  ev["note"]),
                     "timePT":   st.session_state.get(f"pt_{eid}",    ev["timePT"]),
                     "timeET":   st.session_state.get(f"et_{eid}",    ev["timeET"]),
+                    "tags":     ev.get("tags", []),
                 })
             days_data[d] = evs
         return {
