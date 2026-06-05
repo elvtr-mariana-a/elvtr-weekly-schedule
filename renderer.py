@@ -1,44 +1,23 @@
 """
 Pillow-based renderer for the ELVTR weekly schedule graphic.
-All layout is done in base-480px units; the `scale` parameter multiplies everything.
+Call render_graphic(data, scale=1, scheme="Purple") -> PIL Image.
 """
 from __future__ import annotations
-from PIL import Image, ImageDraw, ImageFont
 import os
-import textwrap
+import re
+import urllib.request
+from PIL import Image, ImageDraw, ImageFont
 
 # ---------------------------------------------------------------------------
-# Colour palette
+# Colour palette — base (event/text colours, never change with scheme)
 # ---------------------------------------------------------------------------
-C = {
-    "bg":           (245, 244, 252),
-    "header":       (60,  52, 137),
-    "week_bar":     (83,  74, 183),
+BASE_C = {
     "white":        (255, 255, 255),
-    "card_border":  (206, 203, 246),
-    "footer_bg":    (238, 237, 254),
-    "footer_text":  (83,  74, 183),
-    "elvtr_lbl":    (175, 169, 236),
-    "course":       (238, 237, 254),
-    "instructor":   (175, 169, 236),
-    "week_text":    (206, 203, 246),
-    "empty":        (180, 178, 169),
     "title":        (44,  44,  42),
     "time_txt":     (95,  94,  90),
     "note_txt":     (133,  79,  11),
-    # day label backgrounds
-    "mon_bg":       (83,  74, 183),
-    "tue_bg":       (60,  52, 137),
-    "wed_bg":       (127, 119, 221),
-    "thu_bg":       (38,  33,  92),
-    "fri_bg":       (175, 169, 236),
-    # day name / date colours
-    "mon_nm":       (238, 237, 254),  "mon_dt": (206, 203, 246),
-    "tue_nm":       (238, 237, 254),  "tue_dt": (175, 169, 236),
-    "wed_nm":       (238, 237, 254),  "wed_dt": (238, 237, 254),
-    "thu_nm":       (238, 237, 254),  "thu_dt": (175, 169, 236),
-    "fri_nm":       (38,  33,  92),   "fri_dt": (60,  52, 137),
-    # event type colours
+    "empty":        (180, 178, 169),
+    # event type
     "dot_class":    (83,  74, 183),
     "dot_office":   (29, 158, 117),
     "dot_due":      (186, 117,  23),
@@ -49,9 +28,9 @@ C = {
     "lbl_due":      (133,  79,  11),
     "lbl_optional": (95,  94,  90),
     "lbl_holiday":  (163,  45,  45),
-    "divider":      (238, 237, 254),
-    # badge colours
-    "badge_office_bg":  (29, 158, 117, 31),   # rgba
+    "divider":      (230, 228, 248),
+    # badge
+    "badge_office_bg":  (29, 158, 117, 30),
     "badge_office_bd":  (29, 158, 117),
     "badge_office_txt": (15, 110,  86),
     "badge_ec_bg":      (29, 158, 117, 38),
@@ -60,61 +39,145 @@ C = {
     "ungraded_txt":     (136, 135, 128),
 }
 
+# ---------------------------------------------------------------------------
+# Colour schemes (chrome / decoration colours)
+# ---------------------------------------------------------------------------
+SCHEMES = {
+    "Purple": {
+        "bg":          (245, 244, 252),
+        "header":      (60,  52, 137),
+        "week_bar":    (83,  74, 183),
+        "elvtr_lbl":   (175, 169, 236),
+        "course_col":  (238, 237, 254),
+        "instr_col":   (175, 169, 236),
+        "week_text":   (206, 203, 246),
+        "card_border": (206, 203, 246),
+        "footer_bg":   (238, 237, 254),
+        "footer_text": (83,  74, 183),
+        "mon_bg": (83,74,183),  "mon_nm":(238,237,254), "mon_dt":(206,203,246),
+        "tue_bg": (60,52,137),  "tue_nm":(238,237,254), "tue_dt":(175,169,236),
+        "wed_bg": (127,119,221),"wed_nm":(238,237,254), "wed_dt":(238,237,254),
+        "thu_bg": (38,33,92),   "thu_nm":(238,237,254), "thu_dt":(175,169,236),
+        "fri_bg": (175,169,236),"fri_nm":(38,33,92),    "fri_dt":(60,52,137),
+    },
+    "Blue": {
+        "bg":          (240, 246, 255),
+        "header":      (15,  50, 115),
+        "week_bar":    (28,  78, 158),
+        "elvtr_lbl":   (155, 190, 235),
+        "course_col":  (228, 240, 255),
+        "instr_col":   (155, 190, 235),
+        "week_text":   (185, 214, 250),
+        "card_border": (175, 210, 248),
+        "footer_bg":   (218, 234, 255),
+        "footer_text": (28,  78, 158),
+        "mon_bg": (28,78,158),  "mon_nm":(228,240,255), "mon_dt":(185,214,250),
+        "tue_bg": (15,50,115),  "tue_nm":(228,240,255), "tue_dt":(155,190,235),
+        "wed_bg": (58,118,210), "wed_nm":(228,240,255), "wed_dt":(228,240,255),
+        "thu_bg": (8, 30, 75),  "thu_nm":(228,240,255), "thu_dt":(155,190,235),
+        "fri_bg": (155,190,235),"fri_nm":(8,30,75),     "fri_dt":(15,50,115),
+    },
+    "Green": {
+        "bg":          (240, 250, 244),
+        "header":      (14,  72,  52),
+        "week_bar":    (24, 118,  82),
+        "elvtr_lbl":   (135, 208, 170),
+        "course_col":  (218, 248, 230),
+        "instr_col":   (135, 208, 170),
+        "week_text":   (165, 228, 192),
+        "card_border": (160, 222, 188),
+        "footer_bg":   (205, 242, 222),
+        "footer_text": (24, 118,  82),
+        "mon_bg": (24,118,82),  "mon_nm":(218,248,230), "mon_dt":(165,228,192),
+        "tue_bg": (14,72,52),   "tue_nm":(218,248,230), "tue_dt":(135,208,170),
+        "wed_bg": (52,168,108), "wed_nm":(218,248,230), "wed_dt":(218,248,230),
+        "thu_bg": (8, 45, 32),  "thu_nm":(218,248,230), "thu_dt":(135,208,170),
+        "fri_bg": (135,208,170),"fri_nm":(8,45,32),     "fri_dt":(14,72,52),
+    },
+    "Grayscale": {
+        "bg":          (248, 248, 248),
+        "header":      (32,  32,  32),
+        "week_bar":    (66,  66,  66),
+        "elvtr_lbl":   (175, 175, 175),
+        "course_col":  (242, 242, 242),
+        "instr_col":   (175, 175, 175),
+        "week_text":   (205, 205, 205),
+        "card_border": (205, 205, 205),
+        "footer_bg":   (232, 232, 232),
+        "footer_text": (66,  66,  66),
+        "mon_bg": (66,66,66),   "mon_nm":(242,242,242), "mon_dt":(205,205,205),
+        "tue_bg": (32,32,32),   "tue_nm":(242,242,242), "tue_dt":(175,175,175),
+        "wed_bg": (108,108,108),"wed_nm":(242,242,242), "wed_dt":(242,242,242),
+        "thu_bg": (18,18,18),   "thu_nm":(242,242,242), "thu_dt":(175,175,175),
+        "fri_bg": (175,175,175),"fri_nm":(18,18,18),    "fri_dt":(32,32,32),
+    },
+}
+
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 TYPE_LABELS = {
-    "class": "CLASS",
-    "office": "OFFICE HOURS",
-    "due": "ASSIGNMENT DUE",
+    "class":    "CLASS",
+    "office":   "OFFICE HOURS",
+    "due":      "ASSIGNMENT DUE",
     "optional": "OPTIONAL",
-    "holiday": "HOLIDAY",
+    "holiday":  "HOLIDAY",
 }
 
 # ---------------------------------------------------------------------------
-# Font loader
+# Font management
 # ---------------------------------------------------------------------------
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_FONTS_DIR = os.path.join(_HERE, "fonts")
+
 _FONT_DIRS = [
-    # bundled fonts alongside this file (highest priority)
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts"),
-    # Windows
-    "C:/Windows/Fonts",
-    # Linux (Streamlit Cloud / Ubuntu)
-    "/usr/share/fonts/truetype/dejavu",
+    _FONTS_DIR,                                          # bundled / downloaded
+    "C:/Windows/Fonts",                                  # Windows
+    "/usr/share/fonts/truetype/dejavu",                  # Ubuntu / Streamlit Cloud
     "/usr/share/fonts/dejavu",
     "/usr/share/fonts/truetype/liberation",
     "/usr/share/fonts/truetype/ubuntu",
-    "/usr/share/fonts/truetype/msttcorefonts",
     "/usr/share/fonts/truetype/freefont",
-    # macOS
-    "/Library/Fonts",
+    "/usr/share/fonts/truetype/msttcorefonts",
+    "/Library/Fonts",                                    # macOS
     "/System/Library/Fonts",
     os.path.expanduser("~/Library/Fonts"),
 ]
 _FONT_NAMES = {
-    "regular": [
-        "DMSans-Regular.ttf",           # bundled
-        "arial.ttf", "Arial.ttf",
-        "DejaVuSans.ttf",
-        "LiberationSans-Regular.ttf",
-        "Ubuntu-R.ttf",
-        "FreeSans.ttf",
-    ],
-    "bold": [
-        "DMSans-Bold.ttf",              # bundled
-        "arialbd.ttf", "Arial Bold.ttf",
-        "DejaVuSans-Bold.ttf",
-        "LiberationSans-Bold.ttf",
-        "Ubuntu-B.ttf",
-        "FreeSansBold.ttf",
-    ],
-    "italic": [
-        "DMSans-Italic.ttf",            # bundled
-        "ariali.ttf", "Arial Italic.ttf",
-        "DejaVuSans-Oblique.ttf",
-        "LiberationSans-Italic.ttf",
-        "Ubuntu-RI.ttf",
-        "FreeSansOblique.ttf",
-    ],
+    "regular": ["DMSans-Regular.ttf", "arial.ttf", "Arial.ttf",
+                "DejaVuSans.ttf", "LiberationSans-Regular.ttf",
+                "Ubuntu-R.ttf", "FreeSans.ttf"],
+    "bold":    ["DMSans-Bold.ttf", "arialbd.ttf", "Arial Bold.ttf",
+                "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf",
+                "Ubuntu-B.ttf", "FreeSansBold.ttf"],
+    "italic":  ["DMSans-Italic.ttf", "ariali.ttf", "Arial Italic.ttf",
+                "DejaVuSans-Oblique.ttf", "LiberationSans-Italic.ttf",
+                "Ubuntu-RI.ttf", "FreeSansOblique.ttf"],
 }
+
+def _try_download_dmsans():
+    """Download DM Sans TTFs to ./fonts/ on first run (silent if offline)."""
+    os.makedirs(_FONTS_DIR, exist_ok=True)
+    targets = [
+        ("DMSans-Regular.ttf", "DM+Sans:wght@400"),
+        ("DMSans-Bold.ttf",    "DM+Sans:wght@700"),
+        ("DMSans-Italic.ttf",  "DM+Sans:ital,wght@1,400"),
+    ]
+    # Old IE UA forces Google Fonts to return TTF (not WOFF2)
+    headers = {"User-Agent": "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)"}
+    for filename, family in targets:
+        dest = os.path.join(_FONTS_DIR, filename)
+        if os.path.exists(dest):
+            continue
+        try:
+            css_url = f"https://fonts.googleapis.com/css?family={family}"
+            req = urllib.request.Request(css_url, headers=headers)
+            css = urllib.request.urlopen(req, timeout=8).read().decode("utf-8")
+            m = re.search(r"url\((https://fonts\.gstatic\.com/[^)]+\.ttf)\)", css)
+            if m:
+                urllib.request.urlretrieve(m.group(1), dest)
+        except Exception:
+            pass   # offline or blocked — fall back to system fonts
+
+_try_download_dmsans()
 
 def _find_font(variant: str) -> str | None:
     for d in _FONT_DIRS:
@@ -124,430 +187,331 @@ def _find_font(variant: str) -> str | None:
                 return p
     return None
 
-_font_cache: dict[tuple, ImageFont.FreeTypeFont] = {}
+_font_cache: dict = {}
 
-def fnt(size: int, variant: str = "regular", scale: int = 1) -> ImageFont.FreeTypeFont:
+def fnt(size: int, variant: str = "regular", scale: int = 1):
     key = (size, variant, scale)
-    if key not in _font_cache:
-        path = _find_font(variant)
-        px = size * scale
-        if path:
-            try:
-                _font_cache[key] = ImageFont.truetype(path, px)
-            except Exception:
-                pass
-        if key not in _font_cache:
-            # Last resort: Pillow 10+ supports size on the default font
-            try:
-                _font_cache[key] = ImageFont.load_default(size=px)
-            except TypeError:
-                _font_cache[key] = ImageFont.load_default()
+    if key in _font_cache:
+        return _font_cache[key]
+    path = _find_font(variant)
+    px = size * scale
+    if path:
+        try:
+            _font_cache[key] = ImageFont.truetype(path, px)
+            return _font_cache[key]
+        except Exception:
+            pass
+    # Pillow 10+ supports size on the default font
+    try:
+        _font_cache[key] = ImageFont.load_default(size=px)
+    except TypeError:
+        _font_cache[key] = ImageFont.load_default()
     return _font_cache[key]
-
 
 # ---------------------------------------------------------------------------
 # Drawing helpers
 # ---------------------------------------------------------------------------
-def _draw_rounded_rect(draw: ImageDraw.ImageDraw, xy, radius: int, fill, outline=None, width: int = 1):
-    x0, y0, x1, y1 = xy
-    draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=fill,
-                           outline=outline, width=width)
-
-
-def _text_height(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> int:
-    """Return the pixel height that `text` will occupy when wrapped."""
-    lines = _wrap_text(text, font, max_width, draw)
-    if not lines:
-        return 0
-    bbox = draw.textbbox((0, 0), "Ay", font=font)
-    line_h = bbox[3] - bbox[1]
-    return line_h * len(lines)
-
-
-def _wrap_text(text: str, font, max_width: int, draw: ImageDraw.ImageDraw) -> list[str]:
+def _wrap(text: str, font, max_w: int, draw) -> list[str]:
     if not text:
         return [""]
-    words = text.split()
-    lines, current = [], ""
-    for word in words:
-        test = (current + " " + word).strip()
-        w = draw.textlength(test, font=font)
-        if w <= max_width:
-            current = test
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        test = (cur + " " + w).strip()
+        if draw.textlength(test, font=font) <= max_w:
+            cur = test
         else:
-            if current:
-                lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
     return lines or [""]
 
+def _lh(draw, font) -> int:
+    return draw.textbbox((0, 0), "Ay", font=font)[3]
 
-def _draw_text_wrapped(draw, text, xy, font, fill, max_width):
+def _draw_wrapped(draw, text, xy, font, fill, max_w) -> int:
     x, y = xy
-    lines = _wrap_text(text, font, max_width, draw)
-    bbox = draw.textbbox((0, 0), "Ay", font=font)
-    line_h = bbox[3] - bbox[1]
-    for line in lines:
+    h = _lh(draw, font)
+    for line in _wrap(text, font, max_w, draw):
         draw.text((x, y), line, font=font, fill=fill)
-        y += line_h
-    return y  # returns y after last line
+        y += h
+    return y
 
+def _rounded_rect(draw, xy, r, fill, outline=None, width=1):
+    draw.rounded_rectangle(xy, radius=r, fill=fill, outline=outline, width=width)
 
-def _draw_badge(draw: ImageDraw.ImageDraw, text: str, xy, font,
-                bg_rgba, border_rgb, text_rgb, radius, scale):
+def _badge(draw, img, text, xy, font, bg_rgba, border_rgb, text_rgb, r, s):
+    """Draw a pill badge; return right-edge x."""
     x, y = xy
-    tw = draw.textlength(text, font=font)
-    bbox = draw.textbbox((0, 0), "Ay", font=font)
-    th = bbox[3] - bbox[1]
-    pad_x = 6 * scale
-    pad_y = 2 * scale
-    bx0, by0 = x, y - pad_y
-    bx1, by1 = x + tw + pad_x * 2, y + th + pad_y
-    # draw background with alpha
-    bg_layer = Image.new("RGBA", draw.im.size, (0, 0, 0, 0))
-    bg_d = ImageDraw.Draw(bg_layer)
-    bg_d.rounded_rectangle([bx0, by0, bx1, by1], radius=radius,
-                            fill=bg_rgba, outline=border_rgb, width=scale)
-    # composite onto base (assumes base is RGBA)
-    draw._image.alpha_composite(bg_layer)
-    draw.text((x + pad_x, y), text, font=font, fill=text_rgb)
-    return bx1  # right edge of badge
-
+    tw = int(draw.textlength(text, font=font))
+    th = _lh(draw, font)
+    px, py = 6 * s, 2 * s
+    bx0, by0 = x, y - py
+    bx1, by1 = x + tw + px * 2, y + th + py
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+    od.rounded_rectangle([bx0, by0, bx1, by1], radius=r,
+                         fill=bg_rgba, outline=border_rgb, width=s)
+    img.alpha_composite(overlay)
+    draw.text((x + px, y), text, font=font, fill=text_rgb)
+    return bx1
 
 # ---------------------------------------------------------------------------
-# Per-event height calculation
+# Height calculation
 # ---------------------------------------------------------------------------
-def _event_height(ev: dict, draw: ImageDraw.ImageDraw, content_w: int, scale: int) -> int:
-    """Calculate the pixel height of a single event block."""
-    s = scale
-    line_h_small = draw.textbbox((0, 0), "Ay", font=fnt(10, "regular", s))[3]
-    line_h_title = draw.textbbox((0, 0), "Ay", font=fnt(13, "bold",    s))[3]
-    line_h_time  = draw.textbbox((0, 0), "Ay", font=fnt(11, "regular", s))[3]
-
-    indent = 13 * s
-    h = line_h_small  # type label row
-
-    title_w = content_w - indent
-    title_lines = _wrap_text(ev.get("title") or "—", fnt(13, "bold", s), title_w, draw)
-    h += line_h_title * len(title_lines)
-
+def _event_h(ev: dict, draw, cw: int, s: int) -> int:
+    indent = 14 * s
+    h  = _lh(draw, fnt(10, "bold",    s)) + 4 * s   # type label
+    h += _lh(draw, fnt(13, "bold",    s)) * len(    # title lines
+            _wrap(ev.get("title") or "-", fnt(13, "bold", s), cw - indent, draw))
+    h += 3 * s
     if ev.get("type") == "holiday" and ev.get("note"):
-        note_lines = _wrap_text(ev["note"], fnt(11, "italic", s), title_w, draw)
-        h += line_h_time * len(note_lines)
+        h += _lh(draw, fnt(11, "italic", s)) + 2 * s
+    has_time = (ev.get("timePT") or ev.get("timeET") or
+                ev.get("type") == "office" or
+                (ev.get("type") == "due"      and ev.get("extraCredit")) or
+                (ev.get("type") == "optional" and ev.get("ungraded")))
+    if has_time:
+        h += _lh(draw, fnt(11, "regular", s)) + 3 * s
+    return h
 
-    has_time_row = (ev.get("timePT") or ev.get("timeET") or
-                    (ev.get("type") == "office") or
-                    (ev.get("type") == "due" and ev.get("extraCredit")) or
-                    (ev.get("type") == "optional" and ev.get("ungraded")))
-    if has_time_row:
-        h += line_h_time
-
-    return h + 4 * s  # small bottom padding per event
-
-
-def _day_content_height(events: list, draw: ImageDraw.ImageDraw, content_w: int, scale: int) -> int:
+def _day_h(events, draw, cw, s) -> int:
+    pad = 14 * s
     if not events:
-        lh = draw.textbbox((0, 0), "Ay", font=fnt(12, "italic", scale))[3]
-        return lh + 16 * scale
-    total = 0
+        return _lh(draw, fnt(12, "italic", s)) + pad * 2
+    total = pad
     for i, ev in enumerate(events):
-        total += _event_height(ev, draw, content_w, scale)
+        total += _event_h(ev, draw, cw, s)
         if i < len(events) - 1:
-            total += 5 * scale  # divider gap
-    return total + 16 * scale  # top+bottom padding
-
-
-# ---------------------------------------------------------------------------
-# Main render function
-# ---------------------------------------------------------------------------
-def render_graphic(data: dict, scale: int = 2) -> Image.Image:
-    s = scale
-    base_w = 480
-    W = base_w * s
-
-    # ---- First pass: measure total height ----
-    # We need a scratch surface to measure text
-    scratch = Image.new("RGBA", (W, 4000), C["bg"])
-    sdraw = ImageDraw.Draw(scratch)
-
-    label_w = 76 * s
-    pad_x = 6 * s
-    content_w = (base_w - 76 - 12 - 28) * s  # approximate
-
-    header_h = 82 * s
-    week_bar_h = 30 * s
-    footer_h = 36 * s
-    days_pad = 6 * s
-    day_gap = 4 * s
-
-    day_heights = []
-    for day in DAYS:
-        events = data["days"].get(day, [])
-        ch = _day_content_height(events, sdraw, content_w, s)
-        min_h = 56 * s
-        day_heights.append(max(ch, min_h))
-
-    total_days_h = days_pad * 2 + sum(day_heights) + day_gap * (len(DAYS) - 1)
-    H = header_h + week_bar_h + total_days_h + footer_h
-
-    # ---- Actual render ----
-    img = Image.new("RGBA", (W, H), C["bg"])
-    draw = ImageDraw.Draw(img)
-
-    # -- Header --
-    draw.rectangle([0, 0, W, header_h], fill=C["header"])
-    y = 20 * s
-    draw.text((24 * s, y), "ELVTR", font=fnt(10, "bold", s), fill=C["elvtr_lbl"])
-    y += draw.textbbox((0, 0), "Ay", font=fnt(10, "bold", s))[3] + 6 * s
-    course_name = data.get("name") or "Course Name"
-    y = _draw_text_wrapped(draw, course_name, (24 * s, y),
-                           fnt(17, "bold", s), C["course"], W - 48 * s)
-    y += 3 * s
-    instructor = data.get("instructor") or "—"
-    draw.text((24 * s, y), f"Instructor: {instructor}",
-              font=fnt(12, "regular", s), fill=C["instructor"])
-
-    # -- Week bar --
-    wb_y = header_h
-    draw.rectangle([0, wb_y, W, wb_y + week_bar_h], fill=C["week_bar"])
-    wbl = draw.textbbox((0, 0), "Ay", font=fnt(11, "regular", s))[3]
-    draw.text((24 * s, wb_y + (week_bar_h - wbl) // 2),
-              _format_week(data.get("weekStart"), data.get("weekEnd")),
-              font=fnt(11, "regular", s), fill=C["week_text"])
-
-    # -- Days --
-    day_y = header_h + week_bar_h + days_pad
-    for idx, day in enumerate(DAYS):
-        dh = day_heights[idx]
-        events = data["days"].get(day, [])
-
-        # card background
-        _draw_rounded_rect(draw, [days_pad, day_y, W - days_pad, day_y + dh],
-                           radius=10 * s, fill=C["white"],
-                           outline=C["card_border"], width=s)
-
-        slug = day.lower()
-        lbl_bg   = C[f"{slug}_bg"]
-        name_col = C[f"{slug}_nm"]
-        date_col = C[f"{slug}_dt"]
-
-        # left label column (clipped to card with rounded left)
-        _draw_rounded_rect(draw,
-                           [days_pad, day_y, days_pad + label_w, day_y + dh],
-                           radius=10 * s, fill=lbl_bg)
-        # cover right half of label rounding with a rectangle
-        draw.rectangle([days_pad + label_w // 2, day_y,
-                        days_pad + label_w,       day_y + dh], fill=lbl_bg)
-
-        # Day name
-        nm_font = fnt(14, "bold", s)
-        dt_font = fnt(10, "regular", s)
-        nm_h = draw.textbbox((0, 0), "Ay", nm_font)[3]
-        dt_h = draw.textbbox((0, 0), "Ay", dt_font)[3]
-        total_lbl_h = nm_h + 3 * s + dt_h
-        lbl_text_y = day_y + (dh - total_lbl_h) // 2
-
-        draw.text((days_pad + 10 * s, lbl_text_y), day.upper(),
-                  font=nm_font, fill=name_col)
-        date_str = _get_day_date(data.get("weekStart"), idx)
-        draw.text((days_pad + 10 * s, lbl_text_y + nm_h + 3 * s), date_str,
-                  font=dt_font, fill=date_col)
-
-        # separator line between label and content
-        sep_x = days_pad + label_w
-        draw.line([sep_x, day_y + s, sep_x, day_y + dh - s],
-                  fill=C["card_border"], width=s)
-
-        # Content
-        cx = sep_x + 14 * s
-        cy = day_y + 11 * s
-        content_right = W - days_pad - 14 * s
-        real_content_w = content_right - cx
-
-        if not events:
-            draw.text((cx, cy), "No session",
-                      font=fnt(12, "italic", s), fill=C["empty"])
-        else:
-            for ei, ev in enumerate(events):
-                if ei > 0:
-                    div_y = cy + 2 * s
-                    draw.line([cx, div_y, content_right, div_y],
-                              fill=C["divider"], width=s)
-                    cy += 5 * s
-
-                cy = _draw_event(draw, ev, cx, cy, real_content_w, img, s)
-
-        day_y += dh + day_gap
-
-    # -- Footer --
-    foot_y = H - footer_h
-    draw.rectangle([0, foot_y, W, H], fill=C["footer_bg"])
-    channel = data.get("channel") or "#help"
-    foot_txt = f"Posted every Monday · Questions? Drop them in {channel}"
-    fw = draw.textlength(foot_txt, font=fnt(10, "regular", s))
-    ft_h = draw.textbbox((0, 0), "Ay", font=fnt(10, "regular", s))[3]
-    draw.text(((W - fw) // 2, foot_y + (footer_h - ft_h) // 2),
-              foot_txt, font=fnt(10, "regular", s), fill=C["footer_text"])
-
-    # Convert to RGB for PNG export
-    rgb = Image.new("RGB", img.size, (245, 244, 252))
-    rgb.paste(img, mask=img.split()[3])
-    return rgb
-
+            total += 8 * s   # divider gap
+    total += pad
+    return max(total, 60 * s)
 
 # ---------------------------------------------------------------------------
 # Event renderer
 # ---------------------------------------------------------------------------
-def _draw_event(draw, ev, cx, cy, content_w, img, s) -> int:
-    slug = ev.get("type", "class")
-    dot_col  = C.get(f"dot_{slug}", C["dot_class"])
-    lbl_col  = C.get(f"lbl_{slug}", C["lbl_class"])
-    indent   = 13 * s
+def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
+    slug    = ev.get("type", "class")
+    dot_col = c.get(f"dot_{slug}", c["dot_class"])
+    lbl_col = c.get(f"lbl_{slug}", c["lbl_class"])
+    indent  = 14 * s
 
-    # Dot + type label row
-    dot_r = 3 * s
+    # ── Type label + dot ──────────────────────────────────────────────────
     f10b = fnt(10, "bold", s)
-    lh10 = draw.textbbox((0, 0), "Ay", f10b)[3]
-    dot_cy = cy + lh10 // 2
-    draw.ellipse([cx, dot_cy - dot_r, cx + dot_r * 2, dot_cy + dot_r],
-                 fill=dot_col)
-
+    lh10 = _lh(draw, f10b)
+    dot_r = 3 * s
+    draw.ellipse([cx, cy + lh10 // 2 - dot_r,
+                  cx + dot_r * 2, cy + lh10 // 2 + dot_r], fill=dot_col)
     if slug == "class" and ev.get("classNum"):
         type_str = f"CLASS #{ev['classNum']}"
     else:
         type_str = TYPE_LABELS.get(slug, slug.upper())
-
     draw.text((cx + indent, cy), type_str, font=f10b, fill=lbl_col)
-    cy += lh10 + 2 * s
+    cy += lh10 + 4 * s
 
-    # Title
+    # ── Title ─────────────────────────────────────────────────────────────
     f13b = fnt(13, "bold", s)
-    lh13 = draw.textbbox((0, 0), "Ay", f13b)[3]
-    title = ev.get("title") or "—"
-    title_lines = _wrap_text(title, f13b, content_w - indent, draw)
-    for line in title_lines:
-        draw.text((cx + indent, cy), line, font=f13b, fill=C["title"])
+    lh13 = _lh(draw, f13b)
+    for line in _wrap(ev.get("title") or "-", f13b, cw - indent, draw):
+        draw.text((cx + indent, cy), line, font=f13b, fill=c["title"])
         cy += lh13
-    cy += 2 * s
+    cy += 3 * s
 
-    # Holiday note
+    # ── Holiday note ──────────────────────────────────────────────────────
     if slug == "holiday" and ev.get("note"):
         f11i = fnt(11, "italic", s)
-        lh11 = draw.textbbox((0, 0), "Ay", f11i)[3]
-        note_lines = _wrap_text(ev["note"], f11i, content_w - indent, draw)
-        for line in note_lines:
-            draw.text((cx + indent, cy), line, font=f11i, fill=C["note_txt"])
+        lh11 = _lh(draw, f11i)
+        for line in _wrap(ev["note"], f11i, cw - indent, draw):
+            draw.text((cx + indent, cy), line, font=f11i, fill=c["note_txt"])
             cy += lh11
         cy += 2 * s
 
-    # Time / badge row
-    f11 = fnt(11, "regular", s)
-    lh11 = draw.textbbox((0, 0), "Ay", f11)[3]
+    # ── Time / badge row ──────────────────────────────────────────────────
+    f11  = fnt(11, "regular", s)
+    f9b  = fnt(9,  "bold",    s)
+    lh11 = _lh(draw, f11)
 
     pt = (ev.get("timePT") or "").strip()
     et = (ev.get("timeET") or "").strip()
-    if pt and et:
-        time_str = f"{pt} PT / {et} ET"
-    elif pt:
-        time_str = f"{pt} PT"
-    elif et:
-        time_str = f"{et} ET"
-    else:
-        time_str = ""
+    time_str = (f"{pt} PT / {et} ET" if pt and et
+                else (f"{pt} PT" if pt else (f"{et} ET" if et else "")))
 
-    has_time_row = bool(
-        time_str or
-        (slug == "office") or
-        (slug == "due" and ev.get("extraCredit")) or
-        (slug == "optional" and ev.get("ungraded"))
-    )
+    has_time = bool(time_str or slug == "office" or
+                    (slug == "due"      and ev.get("extraCredit")) or
+                    (slug == "optional" and ev.get("ungraded")))
 
-    if has_time_row:
+    if has_time:
         tx = cx + indent
-        f9b = fnt(9, "bold", s)
-
         if slug == "due" and ev.get("extraCredit"):
-            # Extra Credit badge
-            ec_txt = "EXTRA CREDIT"
-            ec_bg = (*C["badge_ec_bd"], 38)
-            tx = _draw_badge_inline(draw, ec_txt, (tx, cy), f9b,
-                                    ec_bg, C["badge_ec_bd"], C["badge_ec_txt"],
-                                    10 * s, s, img)
-            tx += 6 * s
-
+            tx = _badge(draw, img, "EXTRA CREDIT", (tx, cy), f9b,
+                        (*c["badge_ec_bd"], 38),
+                        c["badge_ec_bd"], c["badge_ec_txt"], 10 * s, s) + 6 * s
         if time_str:
-            draw.text((tx, cy), time_str, font=f11, fill=C["time_txt"])
+            draw.text((tx, cy), time_str, font=f11, fill=c["time_txt"])
             tx += int(draw.textlength(time_str, font=f11)) + 6 * s
-
         if slug == "office":
+            # plain ASCII-safe label — no emoji arrows
             timing = ev.get("officeTiming", "before")
-            badge_txt = "⬆ Before class" if timing == "before" else "⬇ After class"
-            of_bg = (*C["badge_office_bd"], 31)
-            _draw_badge_inline(draw, badge_txt, (tx, cy), f9b,
-                               of_bg, C["badge_office_bd"], C["badge_office_txt"],
-                               10 * s, s, img)
-
+            badge_txt = "Before class" if timing == "before" else "After class"
+            _badge(draw, img, badge_txt, (tx, cy), f9b,
+                   (*c["badge_office_bd"], 30),
+                   c["badge_office_bd"], c["badge_office_txt"], 10 * s, s)
         if slug == "optional" and ev.get("ungraded"):
-            ug_txt = "/ Ungraded"
-            draw.text((tx, cy), ug_txt, font=f11, fill=C["ungraded_txt"])
-
-        cy += lh11 + 2 * s
+            draw.text((tx, cy), "/ Ungraded", font=f11, fill=c["ungraded_txt"])
+        cy += lh11 + 3 * s
 
     return cy
 
+# ---------------------------------------------------------------------------
+# Main render function
+# ---------------------------------------------------------------------------
+def render_graphic(data: dict, scale: int = 1, scheme: str = "Purple") -> Image.Image:
+    s = scale
+    W = 480 * s
+    c = {**BASE_C, **SCHEMES.get(scheme, SCHEMES["Purple"])}
 
-def _draw_badge_inline(draw, text, xy, font, bg_rgba, border_rgb, text_rgb, radius, scale, img):
-    """Draw a pill badge and return x position after it."""
-    x, y = xy
-    tw = int(draw.textlength(text, font=font))
-    bbox = draw.textbbox((0, 0), "Ay", font=font)
-    th = bbox[3] - bbox[1]
-    pad_x = 5 * scale
-    pad_y = 2 * scale
-    bx0, by0 = x, y - pad_y
-    bx1, by1 = x + tw + pad_x * 2, y + th + pad_y
+    # ── First pass: measure heights ──────────────────────────────────────
+    scratch = Image.new("RGBA", (W, 4000), c["bg"])
+    sdraw   = ImageDraw.Draw(scratch)
 
-    # Draw badge background as overlay
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    od = ImageDraw.Draw(overlay)
-    od.rounded_rectangle([bx0, by0, bx1, by1], radius=radius,
-                         fill=bg_rgba, outline=border_rgb, width=scale)
-    img.alpha_composite(overlay)
-    draw.text((x + pad_x, y), text, font=font, fill=text_rgb)
-    return bx1
+    label_w  = 76  * s
+    day_pad  = 6   * s
+    day_gap  = 4   * s
+    cx0      = day_pad + label_w + 14 * s        # left edge of content
+    cw       = W - cx0 - 14 * s                  # content width
 
+    header_h  = 88 * s
+    week_h    = 30 * s
+    footer_h  = 36 * s
+    day_hs    = [max(_day_h(data["days"].get(d, []), sdraw, cw, s), 58 * s)
+                 for d in DAYS]
+    total_H   = (header_h + week_h + footer_h
+                 + day_pad * 2 + sum(day_hs) + day_gap * (len(DAYS) - 1))
+
+    # ── Actual canvas ────────────────────────────────────────────────────
+    img  = Image.new("RGBA", (W, total_H), c["bg"])
+    draw = ImageDraw.Draw(img)
+
+    # ── Header ───────────────────────────────────────────────────────────
+    draw.rectangle([0, 0, W, header_h], fill=c["header"])
+    y = 22 * s
+    draw.text((24 * s, y), "ELVTR", font=fnt(10, "bold", s), fill=c["elvtr_lbl"])
+    y += _lh(draw, fnt(10, "bold", s)) + 7 * s
+    y = _draw_wrapped(draw, data.get("name") or "Course Name",
+                      (24 * s, y), fnt(17, "bold", s), c["course_col"], W - 48 * s)
+    y += 4 * s
+    draw.text((24 * s, y),
+              f"Instructor: {data.get('instructor') or '-'}",
+              font=fnt(12, "regular", s), fill=c["instr_col"])
+
+    # ── Week bar ─────────────────────────────────────────────────────────
+    wb_y = header_h
+    draw.rectangle([0, wb_y, W, wb_y + week_h], fill=c["week_bar"])
+    f11  = fnt(11, "regular", s)
+    lh11 = _lh(draw, f11)
+    week_label = _format_week(data.get("weekStart"), data.get("weekEnd"))
+    draw.text((24 * s, wb_y + (week_h - lh11) // 2),
+              week_label, font=f11, fill=c["week_text"])
+
+    # ── Days ─────────────────────────────────────────────────────────────
+    day_y = header_h + week_h + day_pad
+    for idx, day in enumerate(DAYS):
+        dh     = day_hs[idx]
+        events = data["days"].get(day, [])
+        slug   = day.lower()
+
+        # card
+        _rounded_rect(draw,
+                      [day_pad, day_y, W - day_pad, day_y + dh],
+                      r=10 * s, fill=c["white"],
+                      outline=c["card_border"], width=s)
+
+        # left label
+        lbl_bg = c[f"{slug}_bg"]
+        _rounded_rect(draw,
+                      [day_pad, day_y, day_pad + label_w, day_y + dh],
+                      r=10 * s, fill=lbl_bg)
+        # mask the right-side rounded corners of the label column
+        draw.rectangle([day_pad + label_w // 2, day_y,
+                        day_pad + label_w - 1,  day_y + dh], fill=lbl_bg)
+
+        nm_f = fnt(14, "bold",    s)
+        dt_f = fnt(10, "regular", s)
+        lh_nm, lh_dt = _lh(draw, nm_f), _lh(draw, dt_f)
+        block_h = lh_nm + 4 * s + lh_dt
+        ty = day_y + (dh - block_h) // 2
+        draw.text((day_pad + 10 * s, ty),
+                  day.upper(), font=nm_f, fill=c[f"{slug}_nm"])
+        draw.text((day_pad + 10 * s, ty + lh_nm + 4 * s),
+                  _get_date(data.get("weekStart"), idx),
+                  font=dt_f, fill=c[f"{slug}_dt"])
+
+        # separator line
+        sx = day_pad + label_w
+        draw.line([sx, day_y + s, sx, day_y + dh - s],
+                  fill=c["card_border"], width=s)
+
+        # content
+        cy   = day_y + 14 * s
+        cont_x = sx + 14 * s
+        if not events:
+            draw.text((cont_x, cy), "No session",
+                      font=fnt(12, "italic", s), fill=c["empty"])
+        else:
+            for ei, ev in enumerate(events):
+                if ei > 0:
+                    dy = cy + 3 * s
+                    draw.line([cont_x, dy, W - day_pad - 14 * s, dy],
+                              fill=c["divider"], width=s)
+                    cy += 8 * s
+                cy = _draw_event(draw, img, ev, cont_x, cy, cw, s, c)
+
+        day_y += dh + day_gap
+
+    # ── Footer ───────────────────────────────────────────────────────────
+    foot_y = total_H - footer_h
+    draw.rectangle([0, foot_y, W, total_H], fill=c["footer_bg"])
+    channel = data.get("channel") or "#help"
+    foot_txt = f"Posted every Monday  ·  Questions? Drop them in {channel}"
+    fw  = draw.textlength(foot_txt, font=fnt(10, "regular", s))
+    ft_h = _lh(draw, fnt(10, "regular", s))
+    draw.text(((W - fw) // 2, foot_y + (footer_h - ft_h) // 2),
+              foot_txt, font=fnt(10, "regular", s), fill=c["footer_text"])
+
+    # Flatten RGBA → RGB
+    out = Image.new("RGB", img.size, c["bg"][:3])
+    out.paste(img, mask=img.split()[3])
+    return out
 
 # ---------------------------------------------------------------------------
 # Date helpers
 # ---------------------------------------------------------------------------
-def _format_week(start_str: str | None, end_str: str | None) -> str:
-    if not start_str:
-        return "Week of —"
+def _format_week(start: str | None, end: str | None) -> str:
+    if not start:
+        return "Week of -"
     from datetime import date
-    months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    MO = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
     try:
-        s = date.fromisoformat(start_str)
-        sm, sd = months[s.month - 1], s.day
-        if not end_str:
+        s = date.fromisoformat(start)
+        sm, sd = MO[s.month - 1], s.day
+        if not end:
             return f"Week of {sm} {sd}"
-        e = date.fromisoformat(end_str)
-        em, ed = months[e.month - 1], e.day
-        yr = s.year
-        if sm == em:
-            return f"Week of {sm} {sd} – {ed}, {yr}"
-        return f"Week of {sm} {sd} – {em} {ed}, {yr}"
+        e = date.fromisoformat(end)
+        em, ed, yr = MO[e.month - 1], e.day, s.year
+        # Use plain ASCII hyphen – avoids glyph-missing boxes on some fonts
+        return (f"Week of {sm} {sd} - {ed}, {yr}" if sm == em
+                else f"Week of {sm} {sd} - {em} {ed}, {yr}")
     except Exception:
-        return "Week of —"
+        return "Week of -"
 
-
-def _get_day_date(start_str: str | None, day_index: int) -> str:
-    if not start_str:
+def _get_date(start: str | None, idx: int) -> str:
+    if not start:
         return ""
     from datetime import date, timedelta
-    months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    MO = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
     try:
-        d = date.fromisoformat(start_str) + timedelta(days=day_index)
-        return f"{months[d.month - 1]} {d.day}"
+        d = date.fromisoformat(start) + timedelta(days=idx)
+        return f"{MO[d.month - 1]} {d.day}"
     except Exception:
         return ""
