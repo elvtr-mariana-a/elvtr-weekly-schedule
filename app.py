@@ -2,6 +2,7 @@
 ELVTR Weekly Schedule Generator — Streamlit app
 """
 import io
+import base64
 import uuid
 import streamlit as st
 from datetime import date, timedelta
@@ -20,55 +21,87 @@ st.markdown("""
 <style>
 [data-testid="stAppViewContainer"] { background: #0f0e1a; }
 [data-testid="stSidebar"] { display: none; }
-section[data-testid="stMain"] > div { padding-top: 1rem; }
-h1, h2, h3, label, .stText { color: #e8e6f8 !important; }
-.stSelectbox > div, .stTextInput > div { background: #211f33; }
-div[data-baseweb="select"] { background: #211f33 !important; }
+section[data-testid="stMain"] > div:first-child { padding-top: 2.5rem !important; }
+h1, h2, h3 { color: #e8e6f8 !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# Session state bootstrap
+# Constants
 # ---------------------------------------------------------------------------
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 EVENT_TYPES = ["class", "office", "due", "optional", "holiday"]
 TYPE_LABELS = {
-    "class": "Class",
-    "office": "Office Hours",
-    "due": "Assignment Due",
+    "class":    "Class",
+    "office":   "Office Hours",
+    "due":      "Assignment Due",
     "optional": "Optional",
-    "holiday": "Holiday",
+    "holiday":  "Holiday",
 }
 
-def _blank_event(etype="class") -> dict:
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _blank_event(etype: str = "class") -> dict:
     return {
-        "id": str(uuid.uuid4()),
-        "type": etype,
-        "title": "",
-        "classNum": "",
+        "id":           str(uuid.uuid4()),
+        "type":         etype,
+        "title":        "",
+        "classNum":     "",
         "officeTiming": "before",
-        "extraCredit": False,
-        "ungraded": False,
-        "note": "",
-        "timePT": "",
-        "timeET": "",
+        "extraCredit":  False,
+        "ungraded":     False,
+        "note":         "",
+        "timePT":       "",
+        "timeET":       "",
     }
 
-if "events" not in st.session_state:
-    st.session_state.events = {d: [] for d in DAYS}
-if "course" not in st.session_state:
-    st.session_state.course = ""
-if "instructor" not in st.session_state:
-    st.session_state.instructor = ""
-if "channel" not in st.session_state:
-    st.session_state.channel = "#help"
-if "week_start" not in st.session_state:
-    st.session_state.week_start = None
-if "week_end" not in st.session_state:
-    st.session_state.week_end = None
+def _init_event_widgets(ev: dict):
+    """Seed session-state widget keys the first time an event is created."""
+    eid = ev["id"]
+    defaults = {
+        f"title_{eid}": ev["title"],
+        f"cls_{eid}":   ev["classNum"],
+        f"note_{eid}":  ev["note"],
+        f"pt_{eid}":    ev["timePT"],
+        f"et_{eid}":    ev["timeET"],
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+def _preview_html(img) -> str:
+    """Return an <img> tag embedding the image as base64 at exactly 480 px."""
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return (
+        f'<img src="data:image/png;base64,{b64}" '
+        f'width="480" style="width:480px;max-width:100%;'
+        f'border-radius:8px;display:block;" />'
+    )
 
 # ---------------------------------------------------------------------------
-# Layout: two columns
+# Session-state bootstrap
+# ---------------------------------------------------------------------------
+for _k, _v in [
+    ("events",     {d: [] for d in DAYS}),
+    ("course",     ""),
+    ("instructor", ""),
+    ("channel",    "#help"),
+    ("week_start", None),
+    ("week_end",   None),
+]:
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+# Seed widget state for any already-saved events (page refresh / rerun)
+for _d in DAYS:
+    for _ev in st.session_state.events[_d]:
+        _init_event_widgets(_ev)
+
+# ---------------------------------------------------------------------------
+# Layout
 # ---------------------------------------------------------------------------
 left, right = st.columns([5, 6], gap="large")
 
@@ -96,24 +129,19 @@ with left:
 
     col_s, col_e = st.columns(2)
     with col_s:
-        raw_start = st.date_input(
-            "Start date", value=st.session_state.week_start,
-            key="inp_week_start",
-        )
+        raw_start = st.date_input("Start date",
+                                  value=st.session_state.week_start,
+                                  key="inp_week_start")
     with col_e:
-        raw_end = st.date_input(
-            "End date", value=st.session_state.week_end,
-            key="inp_week_end",
-        )
+        raw_end = st.date_input("End date",
+                                value=st.session_state.week_end,
+                                key="inp_week_end")
 
-    # Auto-set Monday→Friday when start date changes
+    # Snap start → Monday of that week; auto-fill Friday end
     if raw_start and raw_start != st.session_state.week_start:
-        # snap to Monday of that week
-        dow = raw_start.weekday()  # Mon=0
-        mon = raw_start - timedelta(days=dow)
-        fri = mon + timedelta(days=4)
+        mon = raw_start - timedelta(days=raw_start.weekday())
         st.session_state.week_start = mon
-        st.session_state.week_end = fri
+        st.session_state.week_end   = mon + timedelta(days=4)
         st.rerun()
     elif raw_start:
         st.session_state.week_start = raw_start
@@ -123,121 +151,144 @@ with left:
     st.markdown("---")
     st.markdown("### Schedule")
 
-    # ---- Day blocks ----
+    # ── Day blocks ────────────────────────────────────────────────────────
     for day in DAYS:
         with st.expander(day, expanded=True):
             events = st.session_state.events[day]
-            to_delete = []
+            action = None   # ("delete" | "up" | "down", index)
 
-            for ev in events:
+            for i, ev in enumerate(events):
                 eid = ev["id"]
-                st.markdown(f"<hr style='border-color:#2e2b4a;margin:6px 0'>", unsafe_allow_html=True)
+                _init_event_widgets(ev)   # no-op if already seeded
 
-                col_type, col_del = st.columns([5, 1])
-                with col_type:
+                st.markdown("<hr style='border-color:#2e2b4a;margin:4px 0 8px'>",
+                            unsafe_allow_html=True)
+
+                # ── Header row: type | ▲ | ▼ | ✕ ──────────────────────
+                c_type, c_up, c_down, c_del = st.columns([5, 1, 1, 1])
+
+                with c_type:
                     new_type = st.selectbox(
                         "Type", EVENT_TYPES,
                         index=EVENT_TYPES.index(ev["type"]),
                         format_func=lambda t: TYPE_LABELS[t],
                         key=f"type_{eid}",
                     )
-                with col_del:
-                    st.markdown("<div style='margin-top:28px'>", unsafe_allow_html=True)
-                    if st.button("✕", key=f"del_{eid}", help="Remove event"):
-                        to_delete.append(eid)
+                with c_up:
+                    st.markdown("<div style='margin-top:26px'>", unsafe_allow_html=True)
+                    if st.button("▲", key=f"up_{eid}", disabled=(i == 0), help="Move up"):
+                        action = ("up", i)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                with c_down:
+                    st.markdown("<div style='margin-top:26px'>", unsafe_allow_html=True)
+                    if st.button("▼", key=f"dn_{eid}",
+                                 disabled=(i == len(events) - 1), help="Move down"):
+                        action = ("down", i)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                with c_del:
+                    st.markdown("<div style='margin-top:26px'>", unsafe_allow_html=True)
+                    if st.button("✕", key=f"del_{eid}", help="Remove"):
+                        action = ("delete", i)
                     st.markdown("</div>", unsafe_allow_html=True)
 
+                # ── Type change → auto-fill office title ─────────────────
                 if new_type != ev["type"]:
                     ev["type"] = new_type
-                    # auto-fill office title
-                    if new_type == "office" and not ev["title"]:
+                    if new_type == "office" and not st.session_state.get(f"title_{eid}", "").strip():
                         first = (st.session_state.instructor or "Instructor").split()[0]
-                        ev["title"] = f"Open Q&A with {first}"
+                        # Set the widget key directly so the input reflects it
+                        st.session_state[f"title_{eid}"] = f"Open Q&A with {first}"
 
-                # Title field
-                default_title = ev["title"]
+                etype = ev["type"]
+
+                # ── Title (reads/writes via session-state key) ───────────
+                # We don't pass value= here so Streamlit uses the key's stored value
                 ev["title"] = st.text_input(
-                    "Title", value=default_title,
+                    "Title",
                     placeholder="Session title…",
                     key=f"title_{eid}",
                 )
 
-                # Type-specific extras
-                etype = ev["type"]
-
+                # ── Class # ─────────────────────────────────────────────
                 if etype == "class":
                     ev["classNum"] = st.text_input(
-                        "Class #", value=ev["classNum"],
-                        placeholder="e.g. 5",
+                        "Class #", placeholder="e.g. 5",
                         key=f"cls_{eid}",
                     )
 
+                # ── Office timing ────────────────────────────────────────
                 if etype == "office":
                     st.markdown("<span style='font-size:12px;color:#8884aa'>Timing</span>",
                                 unsafe_allow_html=True)
-                    tc1, tc2 = st.columns(2)
-                    with tc1:
+                    tb1, tb2 = st.columns(2)
+                    with tb1:
                         if st.button(
-                            "⬆ Before class",
-                            key=f"before_{eid}",
+                            "⬆ Before class", key=f"before_{eid}",
                             type="primary" if ev["officeTiming"] == "before" else "secondary",
                         ):
                             ev["officeTiming"] = "before"
                             st.rerun()
-                    with tc2:
+                    with tb2:
                         if st.button(
-                            "⬇ After class",
-                            key=f"after_{eid}",
+                            "⬇ After class", key=f"after_{eid}",
                             type="primary" if ev["officeTiming"] == "after" else "secondary",
                         ):
                             ev["officeTiming"] = "after"
                             st.rerun()
 
+                # ── Extra credit ─────────────────────────────────────────
                 if etype == "due":
                     ev["extraCredit"] = st.checkbox(
                         "Extra credit?", value=ev["extraCredit"],
                         key=f"ec_{eid}",
                     )
 
+                # ── Ungraded ─────────────────────────────────────────────
                 if etype == "optional":
                     ev["ungraded"] = st.checkbox(
                         "Ungraded?", value=ev["ungraded"],
                         key=f"ug_{eid}",
                     )
 
+                # ── Holiday note ─────────────────────────────────────────
                 if etype == "holiday":
                     ev["note"] = st.text_input(
-                        "Note (optional)", value=ev["note"],
+                        "Note (optional)",
                         placeholder="e.g. Class rescheduled to Jun 10…",
                         key=f"note_{eid}",
                     )
 
-                # Time fields (not shown for holiday)
+                # ── Times (not for holiday) ──────────────────────────────
                 if etype != "holiday":
                     tc1, tc2 = st.columns(2)
                     with tc1:
                         ev["timePT"] = st.text_input(
-                            "Time (PT)", value=ev["timePT"],
-                            placeholder="e.g. 5:00 PM",
+                            "Time (PT)", placeholder="e.g. 5:00 PM",
                             key=f"pt_{eid}",
                         )
                     with tc2:
                         ev["timeET"] = st.text_input(
-                            "Time (ET)", value=ev["timeET"],
-                            placeholder="e.g. 8:00 PM",
+                            "Time (ET)", placeholder="e.g. 8:00 PM",
                             key=f"et_{eid}",
                         )
 
-            # Remove deleted events
-            if to_delete:
-                st.session_state.events[day] = [
-                    e for e in events if e["id"] not in to_delete
-                ]
+            # ── Apply pending action ──────────────────────────────────────
+            if action:
+                op, idx = action
+                lst = st.session_state.events[day]
+                if op == "delete":
+                    lst.pop(idx)
+                elif op == "up" and idx > 0:
+                    lst[idx - 1], lst[idx] = lst[idx], lst[idx - 1]
+                elif op == "down" and idx < len(lst) - 1:
+                    lst[idx], lst[idx + 1] = lst[idx + 1], lst[idx]
                 st.rerun()
 
-            # Add event button
+            # ── Add event ─────────────────────────────────────────────────
             if st.button(f"+ Add event", key=f"add_{day}"):
-                st.session_state.events[day].append(_blank_event("class"))
+                ev = _blank_event("class")
+                _init_event_widgets(ev)
+                st.session_state.events[day].append(ev)
                 st.rerun()
 
 
@@ -251,36 +302,50 @@ with right:
     def _build_data() -> dict:
         ws = st.session_state.week_start
         we = st.session_state.week_end
+        # Pull all field values from session-state widget keys so they're current
+        days_data = {}
+        for d in DAYS:
+            evs = []
+            for ev in st.session_state.events[d]:
+                eid = ev["id"]
+                evs.append({
+                    **ev,
+                    "title":    st.session_state.get(f"title_{eid}", ev["title"]),
+                    "classNum": st.session_state.get(f"cls_{eid}",   ev["classNum"]),
+                    "note":     st.session_state.get(f"note_{eid}",  ev["note"]),
+                    "timePT":   st.session_state.get(f"pt_{eid}",    ev["timePT"]),
+                    "timeET":   st.session_state.get(f"et_{eid}",    ev["timeET"]),
+                })
+            days_data[d] = evs
         return {
-            "name": st.session_state.course,
+            "name":       st.session_state.course,
             "instructor": st.session_state.instructor,
-            "channel": st.session_state.channel,
-            "weekStart": ws.isoformat() if ws else "",
-            "weekEnd": we.isoformat() if we else "",
-            "days": {d: list(st.session_state.events[d]) for d in DAYS},
+            "channel":    st.session_state.channel,
+            "weekStart":  ws.isoformat() if ws else "",
+            "weekEnd":    we.isoformat() if we else "",
+            "days":       days_data,
         }
 
     graphic_data = _build_data()
 
-    # Render preview (2x = 960px, displayed at 480px by Streamlit)
+    # ── Preview at 1× (renders at exactly 480 px; displayed at 480 px) ──
     try:
-        preview_img = render_graphic(graphic_data, scale=2)
-        st.image(preview_img, width=480)
+        preview_img = render_graphic(graphic_data, scale=1)
+        st.markdown(_preview_html(preview_img), unsafe_allow_html=True)
     except Exception as exc:
         st.error(f"Preview error: {exc}")
-        preview_img = None
 
     st.markdown("---")
 
-    # Download button (3x = 1440px)
+    # ── Download at 3× ──────────────────────────────────────────────────
     try:
         hi_res = render_graphic(graphic_data, scale=3)
         buf = io.BytesIO()
         hi_res.save(buf, format="PNG", optimize=True)
         buf.seek(0)
 
-        slug = (graphic_data["name"] or "schedule").lower().replace(" ", "-")
-        week = graphic_data["weekStart"] or "week"
+        slug     = (graphic_data["name"] or "schedule").lower().replace(" ", "-")
+        week     = graphic_data["weekStart"] or "week"
         filename = f"elvtr-{slug}-{week}.png"
 
         st.download_button(
