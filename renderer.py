@@ -73,15 +73,47 @@ TYPE_LABELS = {
 # Font loader
 # ---------------------------------------------------------------------------
 _FONT_DIRS = [
+    # bundled fonts alongside this file (highest priority)
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts"),
+    # Windows
     "C:/Windows/Fonts",
+    # Linux (Streamlit Cloud / Ubuntu)
+    "/usr/share/fonts/truetype/dejavu",
+    "/usr/share/fonts/dejavu",
+    "/usr/share/fonts/truetype/liberation",
+    "/usr/share/fonts/truetype/ubuntu",
     "/usr/share/fonts/truetype/msttcorefonts",
+    "/usr/share/fonts/truetype/freefont",
+    # macOS
     "/Library/Fonts",
     "/System/Library/Fonts",
+    os.path.expanduser("~/Library/Fonts"),
 ]
 _FONT_NAMES = {
-    "regular": ["arial.ttf", "Arial.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"],
-    "bold":    ["arialbd.ttf", "Arial Bold.ttf", "LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf"],
-    "italic":  ["ariali.ttf", "Arial Italic.ttf", "LiberationSans-Italic.ttf", "DejaVuSans-Oblique.ttf"],
+    "regular": [
+        "DMSans-Regular.ttf",           # bundled
+        "arial.ttf", "Arial.ttf",
+        "DejaVuSans.ttf",
+        "LiberationSans-Regular.ttf",
+        "Ubuntu-R.ttf",
+        "FreeSans.ttf",
+    ],
+    "bold": [
+        "DMSans-Bold.ttf",              # bundled
+        "arialbd.ttf", "Arial Bold.ttf",
+        "DejaVuSans-Bold.ttf",
+        "LiberationSans-Bold.ttf",
+        "Ubuntu-B.ttf",
+        "FreeSansBold.ttf",
+    ],
+    "italic": [
+        "DMSans-Italic.ttf",            # bundled
+        "ariali.ttf", "Arial Italic.ttf",
+        "DejaVuSans-Oblique.ttf",
+        "LiberationSans-Italic.ttf",
+        "Ubuntu-RI.ttf",
+        "FreeSansOblique.ttf",
+    ],
 }
 
 def _find_font(variant: str) -> str | None:
@@ -103,9 +135,13 @@ def fnt(size: int, variant: str = "regular", scale: int = 1) -> ImageFont.FreeTy
             try:
                 _font_cache[key] = ImageFont.truetype(path, px)
             except Exception:
+                pass
+        if key not in _font_cache:
+            # Last resort: Pillow 10+ supports size on the default font
+            try:
+                _font_cache[key] = ImageFont.load_default(size=px)
+            except TypeError:
                 _font_cache[key] = ImageFont.load_default()
-        else:
-            _font_cache[key] = ImageFont.load_default()
     return _font_cache[key]
 
 
