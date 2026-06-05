@@ -84,6 +84,8 @@ def _preview_html(img) -> str:
 # ---------------------------------------------------------------------------
 # Session-state bootstrap
 # ---------------------------------------------------------------------------
+SCHEMES = ["Purple", "Blue", "Green", "Grayscale"]
+
 for _k, _v in [
     ("events",     {d: [] for d in DAYS}),
     ("course",     ""),
@@ -91,6 +93,7 @@ for _k, _v in [
     ("channel",    "#help"),
     ("week_start", None),
     ("week_end",   None),
+    ("scheme",     "Purple"),
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
@@ -123,6 +126,17 @@ with left:
         "Discord help channel", value=st.session_state.channel,
         placeholder="e.g. #help", key="inp_channel",
     )
+
+    st.markdown("---")
+    st.markdown("### Colour scheme")
+    scheme_choice = st.radio(
+        "Scheme", SCHEMES,
+        index=SCHEMES.index(st.session_state.scheme),
+        horizontal=True,
+        label_visibility="collapsed",
+        key="inp_scheme",
+    )
+    st.session_state.scheme = scheme_choice
 
     st.markdown("---")
     st.markdown("### Week")
@@ -328,9 +342,11 @@ with right:
 
     graphic_data = _build_data()
 
+    scheme = st.session_state.scheme
+
     # ── Preview at 1× (renders at exactly 480 px; displayed at 480 px) ──
     try:
-        preview_img = render_graphic(graphic_data, scale=1)
+        preview_img = render_graphic(graphic_data, scale=1, scheme=scheme)
         st.markdown(_preview_html(preview_img), unsafe_allow_html=True)
     except Exception as exc:
         st.error(f"Preview error: {exc}")
@@ -339,7 +355,7 @@ with right:
 
     # ── Download at 3× ──────────────────────────────────────────────────
     try:
-        hi_res = render_graphic(graphic_data, scale=3)
+        hi_res = render_graphic(graphic_data, scale=3, scheme=scheme)
         buf = io.BytesIO()
         hi_res.save(buf, format="PNG", optimize=True)
         buf.seek(0)
