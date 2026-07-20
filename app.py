@@ -39,7 +39,7 @@ TYPE_LABELS = {
     "optional": "Optional",
     "noclass":  "No Class",
 }
-NOCLASS_TYPES = ["Federal Holiday", "Bank Holiday", "Instructor Day Off"]
+NOCLASS_TYPES = ["Federal Holiday", "Bank Holiday"]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -221,13 +221,14 @@ with left:
 
                 etype = ev["type"]
 
-                # ── Title (reads/writes via session-state key) ───────────
+                # ── Title (reads/writes via session-state key; not for No Class) ─
                 # We don't pass value= here so Streamlit uses the key's stored value
-                ev["title"] = st.text_input(
-                    "Title",
-                    placeholder="Session title…",
-                    key=f"title_{eid}",
-                )
+                if etype != "noclass":
+                    ev["title"] = st.text_input(
+                        "Title",
+                        placeholder="Session title…",
+                        key=f"title_{eid}",
+                    )
 
                 # ── Class # + tags ──────────────────────────────────────
                 if etype == "class":
@@ -333,7 +334,7 @@ with left:
                         )
                     with tc3:
                         ev["timeUK"] = st.text_input(
-                            "Time (UK)", placeholder="e.g. 1:00 AM",
+                            "Time (GMT/BST)", placeholder="e.g. 1:00 AM",
                             key=f"uk_{eid}",
                         )
 
