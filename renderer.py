@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import re
 import urllib.request
-from datetime import date as _date
+from datetime import date as _date, timedelta as _timedelta
 from PIL import Image, ImageDraw, ImageFont
 
 # ---------------------------------------------------------------------------
@@ -123,9 +123,8 @@ TYPE_LABELS = {
     "noclass":  "NO CLASS",
 }
 NOCLASS_LABELS = {
-    "Federal Holiday":    "Federal Holiday",
-    "Bank Holiday":       "Bank Holiday",
-    "Instructor Day Off": "Instructor Day Off",
+    "Federal Holiday": "Federal Holiday",
+    "Bank Holiday":    "Bank Holiday",
 }
 
 def _noclass_subtitle(ev: dict) -> str:
@@ -133,15 +132,19 @@ def _noclass_subtitle(ev: dict) -> str:
     note = (ev.get("note") or "").strip()
     return f"{reason} — {note}" if note else reason
 
+def _last_sunday(year: int, month: int):
+    """The last Sunday of the given month (used for UK DST boundaries)."""
+    next_first = _date(year + 1, 1, 1) if month == 12 else _date(year, month + 1, 1)
+    d = next_first - _timedelta(days=1)
+    return d - _timedelta(days=(d.weekday() - 6) % 7)
+
 def _uk_abbr(d) -> str:
-    """Return 'BST' or 'GMT' for a given date in the UK, via IANA tz data."""
-    try:
-        from zoneinfo import ZoneInfo
-        from datetime import datetime
-        dt = datetime(d.year, d.month, d.day, 12, 0, tzinfo=ZoneInfo("Europe/London"))
-        return dt.tzname() or "UK"
-    except Exception:
-        return "UK"
+    """Return 'BST' or 'GMT' for a given date, per the UK's DST rule (clocks
+    forward last Sunday of March, back last Sunday of October). Computed
+    directly rather than via zoneinfo, since Windows has no bundled tz data."""
+    bst_start = _last_sunday(d.year, 3)
+    bst_end = _last_sunday(d.year, 10)
+    return "BST" if bst_start <= d < bst_end else "GMT"
 
 def _format_times(pt: str, et: str, uk: str, uk_abbr: str) -> str:
     parts = []
@@ -305,9 +308,10 @@ def _event_h(ev: dict, draw, cw: int, s: int) -> int:
     slug = ev.get("type", "class")
     cancelled = slug == "office" and ev.get("officeCancelled")
     h  = _lh(draw, fnt(10, "bold",    s)) + 4 * s   # type label
-    h += _lh(draw, fnt(13, "bold",    s)) * len(    # title lines
-            _wrap(ev.get("title") or "-", fnt(13, "bold", s), cw - indent, draw))
-    h += 3 * s
+    if slug != "noclass":                           # No Class events have no title
+        h += _lh(draw, fnt(13, "bold", s)) * len(
+                _wrap(ev.get("title") or "-", fnt(13, "bold", s), cw - indent, draw))
+        h += 3 * s
     # class tag pills (may wrap to multiple rows)
     if slug == "class" and ev.get("tags"):
         f9b = fnt(9, "bold", s)
@@ -378,17 +382,19 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
     cy += lh10 + 4 * s
 
     # ── Title (struck through if this Office Hours session is cancelled) ───
-    f13b = fnt(13, "bold", s)
-    lh13 = _lh(draw, f13b)
-    for line in _wrap(ev.get("title") or "-", f13b, cw - indent, draw):
-        draw.text((cx + indent, cy), line, font=f13b, fill=c["title"])
-        if cancelled and line:
-            tw = draw.textlength(line, font=f13b)
-            mid_y = cy + lh13 // 2
-            draw.line([cx + indent, mid_y, cx + indent + tw, mid_y],
-                      fill=c["lbl_noclass"], width=max(1, s))
-        cy += lh13
-    cy += 3 * s
+    # No Class events skip the title entirely — the subtitle below covers it.
+    if slug != "noclass":
+        f13b = fnt(13, "bold", s)
+        lh13 = _lh(draw, f13b)
+        for line in _wrap(ev.get("title") or "-", f13b, cw - indent, draw):
+            draw.text((cx + indent, cy), line, font=f13b, fill=c["title"])
+            if cancelled and line:
+                tw = draw.textlength(line, font=f13b)
+                mid_y = cy + lh13 // 2
+                draw.line([cx + indent, mid_y, cx + indent + tw, mid_y],
+                          fill=c["lbl_noclass"], width=max(1, s))
+            cy += lh13
+        cy += 3 * s
 
     # ── Class tag pills (Guest Speaker / Workshop / Case Study) ───────────
     if slug == "class" and ev.get("tags"):
