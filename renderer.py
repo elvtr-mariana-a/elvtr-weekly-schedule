@@ -22,12 +22,10 @@ BASE_C = {
     "dot_class":    (83,  74, 183),
     "dot_office":   (29, 158, 117),
     "dot_due":      (186, 117,  23),
-    "dot_optional": (136, 135, 128),
     "dot_noclass":  (201,  64,  64),
     "lbl_class":    (83,  74, 183),
     "lbl_office":   (15, 110,  86),
     "lbl_due":      (133,  79,  11),
-    "lbl_optional": (95,  94,  90),
     "lbl_noclass":  (163,  45,  45),
     "divider":      (230, 228, 248),
     # badge
@@ -116,11 +114,10 @@ SCHEMES = {
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 TYPE_LABELS = {
-    "class":    "CLASS",
-    "office":   "OFFICE HOURS",
-    "due":      "ASSIGNMENT DUE",
-    "optional": "OPTIONAL",
-    "noclass":  "NO CLASS",
+    "class":   "CLASS",
+    "office":  "OFFICE HOURS",
+    "due":     "ASSIGNMENT DUE",
+    "noclass": "NO CLASS",
 }
 NOCLASS_LABELS = {
     "Federal Holiday": "Federal Holiday",
@@ -338,8 +335,7 @@ def _event_h(ev: dict, draw, cw: int, s: int) -> int:
     has_time = (not cancelled) and (
                 ev.get("timePT") or ev.get("timeET") or ev.get("timeUK") or
                 slug == "office" or
-                (slug == "due"      and ev.get("extraCredit")) or
-                (slug == "optional" and ev.get("ungraded")))
+                (slug == "due" and ev.get("dueTag") in ("Extra Credit", "Ungraded")))
     if has_time:
         h += _lh(draw, fnt(11, "regular", s)) + 3 * s
     return h
@@ -444,14 +440,14 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
     uk = (ev.get("timeUK") or "").strip()
     time_str = _format_times(pt, et, uk, ev.get("_ukAbbr", "UK"))
 
+    due_tag = ev.get("dueTag") if slug == "due" else None
     has_time = (not cancelled) and bool(
                     time_str or slug == "office" or
-                    (slug == "due"      and ev.get("extraCredit")) or
-                    (slug == "optional" and ev.get("ungraded")))
+                    due_tag in ("Extra Credit", "Ungraded"))
 
     if has_time:
         tx = cx + indent
-        if slug == "due" and ev.get("extraCredit"):
+        if due_tag == "Extra Credit":
             tx = _badge(draw, img, "EXTRA CREDIT", (tx, cy), f9b,
                         (*c["badge_ec_bd"], 38),
                         c["badge_ec_bd"], c["badge_ec_txt"], 10 * s, s) + 6 * s
@@ -465,7 +461,7 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
             _badge(draw, img, badge_txt, (tx, cy), f9b,
                    (*c["badge_office_bd"], 30),
                    c["badge_office_bd"], c["badge_office_txt"], 10 * s, s)
-        if slug == "optional" and ev.get("ungraded"):
+        if due_tag == "Ungraded":
             draw.text((tx, cy), "/ Ungraded", font=f11, fill=c["ungraded_txt"])
         cy += lh11 + 3 * s
 
