@@ -35,7 +35,9 @@ BASE_C = {
     "badge_ec_bg":      (29, 158, 117, 38),
     "badge_ec_bd":      (29, 158, 117),
     "badge_ec_txt":     (15, 110,  86),
-    "ungraded_txt":     (136, 135, 128),
+    "badge_ungraded_bg":  (136, 135, 128, 34),
+    "badge_ungraded_bd":  (136, 135, 128),
+    "badge_ungraded_txt": (95,  94,  90),
 }
 
 # ---------------------------------------------------------------------------
@@ -439,18 +441,23 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
     et = (ev.get("timeET") or "").strip()
     uk = (ev.get("timeUK") or "").strip()
     time_str = _format_times(pt, et, uk, ev.get("_ukAbbr", "UK"))
+    if slug == "due" and time_str:
+        time_str = f"Due at {time_str}"
 
     due_tag = ev.get("dueTag") if slug == "due" else None
+    due_badges = {
+        "Extra Credit": ("EXTRA CREDIT", c["badge_ec_bd"],        c["badge_ec_txt"]),
+        "Ungraded":     ("UNGRADED",     c["badge_ungraded_bd"],  c["badge_ungraded_txt"]),
+    }
     has_time = (not cancelled) and bool(
-                    time_str or slug == "office" or
-                    due_tag in ("Extra Credit", "Ungraded"))
+                    time_str or slug == "office" or due_tag in due_badges)
 
     if has_time:
         tx = cx + indent
-        if due_tag == "Extra Credit":
-            tx = _badge(draw, img, "EXTRA CREDIT", (tx, cy), f9b,
-                        (*c["badge_ec_bd"], 38),
-                        c["badge_ec_bd"], c["badge_ec_txt"], 10 * s, s) + 6 * s
+        if due_tag in due_badges:
+            label, bd, txt = due_badges[due_tag]
+            tx = _badge(draw, img, label, (tx, cy), f9b,
+                        (*bd, 38), bd, txt, 10 * s, s) + 6 * s
         if time_str:
             draw.text((tx, cy), time_str, font=f11, fill=c["time_txt"])
             tx += int(draw.textlength(time_str, font=f11)) + 6 * s
@@ -461,8 +468,6 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
             _badge(draw, img, badge_txt, (tx, cy), f9b,
                    (*c["badge_office_bd"], 30),
                    c["badge_office_bd"], c["badge_office_txt"], 10 * s, s)
-        if due_tag == "Ungraded":
-            draw.text((tx, cy), "/ Ungraded", font=f11, fill=c["ungraded_txt"])
         cy += lh11 + 3 * s
 
     return cy
