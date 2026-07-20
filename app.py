@@ -31,15 +31,15 @@ h1, h2, h3 { color: #e8e6f8 !important; }
 # Constants
 # ---------------------------------------------------------------------------
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-EVENT_TYPES = ["class", "office", "due", "optional", "noclass"]
+EVENT_TYPES = ["class", "office", "due", "noclass"]
 TYPE_LABELS = {
-    "class":    "Class",
-    "office":   "Office Hours",
-    "due":      "Assignment Due",
-    "optional": "Optional",
-    "noclass":  "No Class",
+    "class":   "Class",
+    "office":  "Office Hours",
+    "due":     "Assignment Due",
+    "noclass": "No Class",
 }
 NOCLASS_TYPES = ["Federal Holiday", "Bank Holiday"]
+DUE_TAGS = ["None", "Extra Credit", "Ungraded"]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -55,8 +55,7 @@ def _blank_event(etype: str = "class") -> dict:
         "tags":            [],        # class-only: Guest Speaker / Workshop / Case Study
         "officeTiming":    "before",
         "officeCancelled": False,
-        "extraCredit":     False,
-        "ungraded":        False,
+        "dueTag":          DUE_TAGS[0],
         "noClassType":     NOCLASS_TYPES[0],
         "note":            "",
         "timePT":          "",
@@ -291,18 +290,13 @@ with left:
                                 ev["officeTiming"] = "after"
                                 st.rerun()
 
-                # ── Extra credit ─────────────────────────────────────────
+                # ── Assignment tag: None / Extra Credit / Ungraded ────────
                 if etype == "due":
-                    ev["extraCredit"] = st.checkbox(
-                        "Extra credit?", value=ev["extraCredit"],
-                        key=f"ec_{eid}",
-                    )
-
-                # ── Ungraded ─────────────────────────────────────────────
-                if etype == "optional":
-                    ev["ungraded"] = st.checkbox(
-                        "Ungraded?", value=ev["ungraded"],
-                        key=f"ug_{eid}",
+                    ev["dueTag"] = st.radio(
+                        "Tag", DUE_TAGS,
+                        index=DUE_TAGS.index(ev.get("dueTag", "None")),
+                        horizontal=True,
+                        key=f"duetag_{eid}",
                     )
 
                 # ── No Class reason + note ────────────────────────────────
