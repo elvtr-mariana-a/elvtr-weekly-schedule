@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import re
 import urllib.request
+from datetime import date as _date
 from PIL import Image, ImageDraw, ImageFont
 
 # ---------------------------------------------------------------------------
@@ -22,12 +23,12 @@ BASE_C = {
     "dot_office":   (29, 158, 117),
     "dot_due":      (186, 117,  23),
     "dot_optional": (136, 135, 128),
-    "dot_holiday":  (201,  64,  64),
+    "dot_noclass":  (201,  64,  64),
     "lbl_class":    (83,  74, 183),
     "lbl_office":   (15, 110,  86),
     "lbl_due":      (133,  79,  11),
     "lbl_optional": (95,  94,  90),
-    "lbl_holiday":  (163,  45,  45),
+    "lbl_noclass":  (163,  45,  45),
     "divider":      (230, 228, 248),
     # badge
     "badge_office_bg":  (29, 158, 117, 30),
@@ -119,8 +120,38 @@ TYPE_LABELS = {
     "office":   "OFFICE HOURS",
     "due":      "ASSIGNMENT DUE",
     "optional": "OPTIONAL",
-    "holiday":  "HOLIDAY",
+    "noclass":  "NO CLASS",
 }
+NOCLASS_LABELS = {
+    "Federal Holiday":    "Federal Holiday",
+    "Bank Holiday":       "Bank Holiday",
+    "Instructor Day Off": "Instructor Day Off",
+}
+
+def _noclass_subtitle(ev: dict) -> str:
+    reason = NOCLASS_LABELS.get(ev.get("noClassType"), ev.get("noClassType") or "Federal Holiday")
+    note = (ev.get("note") or "").strip()
+    return f"{reason} — {note}" if note else reason
+
+def _uk_abbr(d) -> str:
+    """Return 'BST' or 'GMT' for a given date in the UK, via IANA tz data."""
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+        dt = datetime(d.year, d.month, d.day, 12, 0, tzinfo=ZoneInfo("Europe/London"))
+        return dt.tzname() or "UK"
+    except Exception:
+        return "UK"
+
+def _format_times(pt: str, et: str, uk: str, uk_abbr: str) -> str:
+    parts = []
+    if pt:
+        parts.append(f"{pt} PT")
+    if et:
+        parts.append(f"{et} ET")
+    if uk:
+        parts.append(f"{uk} {uk_abbr}")
+    return " / ".join(parts)
 
 # ---------------------------------------------------------------------------
 # Font management
@@ -271,12 +302,14 @@ def _badge(draw, img, text, xy, font, bg_rgba, border_rgb, text_rgb, r, s):
 # ---------------------------------------------------------------------------
 def _event_h(ev: dict, draw, cw: int, s: int) -> int:
     indent = 14 * s
+    slug = ev.get("type", "class")
+    cancelled = slug == "office" and ev.get("officeCancelled")
     h  = _lh(draw, fnt(10, "bold",    s)) + 4 * s   # type label
     h += _lh(draw, fnt(13, "bold",    s)) * len(    # title lines
             _wrap(ev.get("title") or "-", fnt(13, "bold", s), cw - indent, draw))
     h += 3 * s
     # class tag pills (may wrap to multiple rows)
-    if ev.get("type") == "class" and ev.get("tags"):
+    if slug == "class" and ev.get("tags"):
         f9b = fnt(9, "bold", s)
         pill_row_h = _lh(draw, f9b) + 4 * s  # single row height
         pill_gap   = 5 * s
@@ -289,12 +322,20 @@ def _event_h(ev: dict, draw, cw: int, s: int) -> int:
             else:
                 tx += pw
         h += rows * pill_row_h + 5 * s  # rows + bottom margin
-    if ev.get("type") == "holiday" and ev.get("note"):
-        h += _lh(draw, fnt(11, "italic", s)) + 2 * s
-    has_time = (ev.get("timePT") or ev.get("timeET") or
-                ev.get("type") == "office" or
-                (ev.get("type") == "due"      and ev.get("extraCredit")) or
-                (ev.get("type") == "optional" and ev.get("ungraded")))
+    # subtitle: no-class reason, or cancelled-office reason
+    subtitle = None
+    if slug == "noclass":
+        subtitle = _noclass_subtitle(ev)
+    elif cancelled and ev.get("note"):
+        subtitle = ev["note"]
+    if subtitle:
+        f11i = fnt(11, "italic", s)
+        h += _lh(draw, f11i) * len(_wrap(subtitle, f11i, cw - indent, draw)) + 2 * s
+    has_time = (not cancelled) and (
+                ev.get("timePT") or ev.get("timeET") or ev.get("timeUK") or
+                slug == "office" or
+                (slug == "due"      and ev.get("extraCredit")) or
+                (slug == "optional" and ev.get("ungraded")))
     if has_time:
         h += _lh(draw, fnt(11, "regular", s)) + 3 * s
     return h
@@ -315,10 +356,11 @@ def _day_h(events, draw, cw, s) -> int:
 # Event renderer
 # ---------------------------------------------------------------------------
 def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
-    slug    = ev.get("type", "class")
-    dot_col = c.get(f"dot_{slug}", c["dot_class"])
-    lbl_col = c.get(f"lbl_{slug}", c["lbl_class"])
-    indent  = 14 * s
+    slug      = ev.get("type", "class")
+    cancelled = slug == "office" and ev.get("officeCancelled")
+    dot_col   = c.get(f"dot_{slug}", c["dot_class"])
+    lbl_col   = c["lbl_noclass"] if cancelled else c.get(f"lbl_{slug}", c["lbl_class"])
+    indent    = 14 * s
 
     # ── Type label + dot ──────────────────────────────────────────────────
     f10b = fnt(10, "bold", s)
@@ -326,18 +368,25 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
     dot_r = 3 * s
     draw.ellipse([cx, cy + lh10 // 2 - dot_r,
                   cx + dot_r * 2, cy + lh10 // 2 + dot_r], fill=dot_col)
-    if slug == "class" and ev.get("classNum"):
+    if cancelled:
+        type_str = "OFFICE HOURS — CANCELLED"
+    elif slug == "class" and ev.get("classNum"):
         type_str = f"CLASS #{ev['classNum']}"
     else:
         type_str = TYPE_LABELS.get(slug, slug.upper())
     draw.text((cx + indent, cy), type_str, font=f10b, fill=lbl_col)
     cy += lh10 + 4 * s
 
-    # ── Title ─────────────────────────────────────────────────────────────
+    # ── Title (struck through if this Office Hours session is cancelled) ───
     f13b = fnt(13, "bold", s)
     lh13 = _lh(draw, f13b)
     for line in _wrap(ev.get("title") or "-", f13b, cw - indent, draw):
         draw.text((cx + indent, cy), line, font=f13b, fill=c["title"])
+        if cancelled and line:
+            tw = draw.textlength(line, font=f13b)
+            mid_y = cy + lh13 // 2
+            draw.line([cx + indent, mid_y, cx + indent + tw, mid_y],
+                      fill=c["lbl_noclass"], width=max(1, s))
         cy += lh13
     cy += 3 * s
 
@@ -365,13 +414,18 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
                         f9b, pill_bg, pill_bd, pill_txt, 10 * s, s) + pill_gap
         cy += row_h + 5 * s   # final row height + bottom margin
 
-    # ── Holiday note ──────────────────────────────────────────────────────
-    if slug == "holiday" and ev.get("note"):
+    # ── Subtitle: No Class reason, or cancelled-Office Hours reason ────────
+    subtitle = None
+    if slug == "noclass":
+        subtitle = _noclass_subtitle(ev)
+    elif cancelled and ev.get("note"):
+        subtitle = ev["note"]
+    if subtitle:
         f11i = fnt(11, "italic", s)
-        lh11 = _lh(draw, f11i)
-        for line in _wrap(ev["note"], f11i, cw - indent, draw):
+        lh11i = _lh(draw, f11i)
+        for line in _wrap(subtitle, f11i, cw - indent, draw):
             draw.text((cx + indent, cy), line, font=f11i, fill=c["note_txt"])
-            cy += lh11
+            cy += lh11i
         cy += 2 * s
 
     # ── Time / badge row ──────────────────────────────────────────────────
@@ -381,10 +435,11 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
 
     pt = (ev.get("timePT") or "").strip()
     et = (ev.get("timeET") or "").strip()
-    time_str = (f"{pt} PT / {et} ET" if pt and et
-                else (f"{pt} PT" if pt else (f"{et} ET" if et else "")))
+    uk = (ev.get("timeUK") or "").strip()
+    time_str = _format_times(pt, et, uk, ev.get("_ukAbbr", "UK"))
 
-    has_time = bool(time_str or slug == "office" or
+    has_time = (not cancelled) and bool(
+                    time_str or slug == "office" or
                     (slug == "due"      and ev.get("extraCredit")) or
                     (slug == "optional" and ev.get("ungraded")))
 
@@ -417,6 +472,13 @@ def render_graphic(data: dict, scale: int = 1, scheme: str = "Purple") -> Image.
     s = scale
     W = 480 * s
     c = {**BASE_C, **SCHEMES.get(scheme, SCHEMES["Purple"])}
+
+    # ── UK timezone abbreviation for this week (BST or GMT) ────────────────
+    week_start = data.get("weekStart")
+    uk_abbr = _uk_abbr(_date.fromisoformat(week_start)) if week_start else "UK"
+    for _d in DAYS:
+        for _ev in data["days"].get(_d, []):
+            _ev["_ukAbbr"] = uk_abbr
 
     # ── First pass: measure heights ──────────────────────────────────────
     scratch = Image.new("RGBA", (W, 4000), c["bg"])
