@@ -31,14 +31,15 @@ h1, h2, h3 { color: #e8e6f8 !important; }
 # Constants
 # ---------------------------------------------------------------------------
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-EVENT_TYPES = ["class", "office", "due", "optional", "holiday"]
+EVENT_TYPES = ["class", "office", "due", "optional", "noclass"]
 TYPE_LABELS = {
     "class":    "Class",
     "office":   "Office Hours",
     "due":      "Assignment Due",
     "optional": "Optional",
-    "holiday":  "Holiday",
+    "noclass":  "No Class",
 }
+NOCLASS_TYPES = ["Federal Holiday", "Bank Holiday", "Instructor Day Off"]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -47,17 +48,20 @@ CLASS_TAGS = ["Guest Speaker", "Workshop", "Case Study"]
 
 def _blank_event(etype: str = "class") -> dict:
     return {
-        "id":           str(uuid.uuid4()),
-        "type":         etype,
-        "title":        "",
-        "classNum":     "",
-        "tags":         [],        # class-only: Guest Speaker / Workshop / Case Study
-        "officeTiming": "before",
-        "extraCredit":  False,
-        "ungraded":     False,
-        "note":         "",
-        "timePT":       "",
-        "timeET":       "",
+        "id":              str(uuid.uuid4()),
+        "type":            etype,
+        "title":           "",
+        "classNum":        "",
+        "tags":            [],        # class-only: Guest Speaker / Workshop / Case Study
+        "officeTiming":    "before",
+        "officeCancelled": False,
+        "extraCredit":     False,
+        "ungraded":        False,
+        "noClassType":     NOCLASS_TYPES[0],
+        "note":            "",
+        "timePT":          "",
+        "timeET":          "",
+        "timeUK":          "",
     }
 
 def _init_event_widgets(ev: dict):
@@ -69,6 +73,7 @@ def _init_event_widgets(ev: dict):
         f"note_{eid}":  ev["note"],
         f"pt_{eid}":    ev["timePT"],
         f"et_{eid}":    ev["timeET"],
+        f"uk_{eid}":    ev.get("timeUK", ""),
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -97,7 +102,6 @@ for _k, _v in [
     ("channel",     "#help"),
     ("footer_line", ""),
     ("week_start",  None),
-    ("week_end",    None),
     ("scheme",      "Purple"),
 ]:
     if _k not in st.session_state:
@@ -152,30 +156,17 @@ with left:
     st.markdown("---")
     st.markdown("### Week")
 
-    col_s, col_e = st.columns(2)
-    with col_s:
-        raw_start = st.date_input("Start date",
-                                  value=st.session_state.week_start,
-                                  key="inp_week_start")
-    with col_e:
-        raw_end = st.date_input("End date",
-                                value=st.session_state.week_end,
-                                key="inp_week_end")
+    raw_start = st.date_input("Start date",
+                              value=st.session_state.week_start,
+                              key="inp_week_start")
 
-    # Snap start → Monday of that week; auto-fill Friday end
+    # Snap start → Monday of that week; end date (Friday) is derived, not entered
     if raw_start and raw_start != st.session_state.week_start:
         mon = raw_start - timedelta(days=raw_start.weekday())
         st.session_state.week_start = mon
-        st.session_state.week_end   = mon + timedelta(days=4)
         st.rerun()
     elif raw_start:
         st.session_state.week_start = raw_start
-    if raw_end and raw_end != st.session_state.week_end:
-        st.session_state.week_end = raw_end
-
-    ws, we = st.session_state.week_start, st.session_state.week_end
-    if ws and we and we < ws:
-        st.warning("End date is before start date.")
 
     st.markdown("---")
     st.markdown("### Schedule")
@@ -266,25 +257,38 @@ with left:
                                 ev["tags"] = tags
                                 st.rerun()
 
-                # ── Office timing ────────────────────────────────────────
+                # ── Office timing / cancelled ─────────────────────────────
+                office_cancelled = False
                 if etype == "office":
-                    st.markdown("<span style='font-size:12px;color:#8884aa'>Timing</span>",
-                                unsafe_allow_html=True)
-                    tb1, tb2 = st.columns(2)
-                    with tb1:
-                        if st.button(
-                            "⬆ Before class", key=f"before_{eid}",
-                            type="primary" if ev["officeTiming"] == "before" else "secondary",
-                        ):
-                            ev["officeTiming"] = "before"
-                            st.rerun()
-                    with tb2:
-                        if st.button(
-                            "⬇ After class", key=f"after_{eid}",
-                            type="primary" if ev["officeTiming"] == "after" else "secondary",
-                        ):
-                            ev["officeTiming"] = "after"
-                            st.rerun()
+                    ev["officeCancelled"] = st.checkbox(
+                        "Cancelled?", value=ev.get("officeCancelled", False),
+                        key=f"cancelled_{eid}",
+                    )
+                    office_cancelled = ev["officeCancelled"]
+                    if office_cancelled:
+                        ev["note"] = st.text_input(
+                            "Reason (optional)",
+                            placeholder="e.g. Instructor unavailable",
+                            key=f"note_{eid}",
+                        )
+                    else:
+                        st.markdown("<span style='font-size:12px;color:#8884aa'>Timing</span>",
+                                    unsafe_allow_html=True)
+                        tb1, tb2 = st.columns(2)
+                        with tb1:
+                            if st.button(
+                                "⬆ Before class", key=f"before_{eid}",
+                                type="primary" if ev["officeTiming"] == "before" else "secondary",
+                            ):
+                                ev["officeTiming"] = "before"
+                                st.rerun()
+                        with tb2:
+                            if st.button(
+                                "⬇ After class", key=f"after_{eid}",
+                                type="primary" if ev["officeTiming"] == "after" else "secondary",
+                            ):
+                                ev["officeTiming"] = "after"
+                                st.rerun()
 
                 # ── Extra credit ─────────────────────────────────────────
                 if etype == "due":
@@ -300,17 +304,23 @@ with left:
                         key=f"ug_{eid}",
                     )
 
-                # ── Holiday note ─────────────────────────────────────────
-                if etype == "holiday":
+                # ── No Class reason + note ────────────────────────────────
+                if etype == "noclass":
+                    ev["noClassType"] = st.selectbox(
+                        "Reason", NOCLASS_TYPES,
+                        index=NOCLASS_TYPES.index(
+                            ev.get("noClassType", NOCLASS_TYPES[0])),
+                        key=f"noclasstype_{eid}",
+                    )
                     ev["note"] = st.text_input(
                         "Note (optional)",
                         placeholder="e.g. Class rescheduled to Jun 10…",
                         key=f"note_{eid}",
                     )
 
-                # ── Times (not for holiday) ──────────────────────────────
-                if etype != "holiday":
-                    tc1, tc2 = st.columns(2)
+                # ── Times (not for No Class or cancelled Office Hours) ────
+                if etype != "noclass" and not office_cancelled:
+                    tc1, tc2, tc3 = st.columns(3)
                     with tc1:
                         ev["timePT"] = st.text_input(
                             "Time (PT)", placeholder="e.g. 5:00 PM",
@@ -320,6 +330,11 @@ with left:
                         ev["timeET"] = st.text_input(
                             "Time (ET)", placeholder="e.g. 8:00 PM",
                             key=f"et_{eid}",
+                        )
+                    with tc3:
+                        ev["timeUK"] = st.text_input(
+                            "Time (UK)", placeholder="e.g. 1:00 AM",
+                            key=f"uk_{eid}",
                         )
 
             # ── Apply pending action ──────────────────────────────────────
@@ -351,7 +366,7 @@ with right:
 
     def _build_data() -> dict:
         ws = st.session_state.week_start
-        we = st.session_state.week_end
+        we = ws + timedelta(days=4) if ws else None
         # Pull all field values from session-state widget keys so they're current
         days_data = {}
         for d in DAYS:
@@ -365,6 +380,7 @@ with right:
                     "note":     st.session_state.get(f"note_{eid}",  ev["note"]),
                     "timePT":   st.session_state.get(f"pt_{eid}",    ev["timePT"]),
                     "timeET":   st.session_state.get(f"et_{eid}",    ev["timeET"]),
+                    "timeUK":   st.session_state.get(f"uk_{eid}",    ev.get("timeUK", "")),
                     "tags":     ev.get("tags", []),
                 })
             days_data[d] = evs
