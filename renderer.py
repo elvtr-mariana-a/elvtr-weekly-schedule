@@ -22,10 +22,12 @@ BASE_C = {
     "dot_class":    (83,  74, 183),
     "dot_office":   (29, 158, 117),
     "dot_due":      (186, 117,  23),
+    "dot_grading":  (37, 110, 178),
     "dot_noclass":  (201,  64,  64),
     "lbl_class":    (83,  74, 183),
     "lbl_office":   (15, 110,  86),
     "lbl_due":      (133,  79,  11),
+    "lbl_grading":  (24,  89, 148),
     "lbl_noclass":  (163,  45,  45),
     "divider":      (230, 228, 248),
     # badge
@@ -60,6 +62,8 @@ SCHEMES = {
         "wed_bg": (127,119,221),"wed_nm":(238,237,254), "wed_dt":(238,237,254),
         "thu_bg": (38,33,92),   "thu_nm":(238,237,254), "thu_dt":(175,169,236),
         "fri_bg": (175,169,236),"fri_nm":(38,33,92),    "fri_dt":(60,52,137),
+        "sat_bg": (100,90,200), "sat_nm":(238,237,254), "sat_dt":(206,203,246),
+        "sun_bg": (210,205,248),"sun_nm":(38,33,92),    "sun_dt":(60,52,137),
     },
     "Blue": {
         "bg":          (240, 246, 255),
@@ -77,6 +81,8 @@ SCHEMES = {
         "wed_bg": (58,118,210), "wed_nm":(228,240,255), "wed_dt":(228,240,255),
         "thu_bg": (8, 30, 75),  "thu_nm":(228,240,255), "thu_dt":(155,190,235),
         "fri_bg": (155,190,235),"fri_nm":(8,30,75),     "fri_dt":(15,50,115),
+        "sat_bg": (38,95,180),  "sat_nm":(228,240,255), "sat_dt":(185,214,250),
+        "sun_bg": (190,215,250),"sun_nm":(8,30,75),     "sun_dt":(15,50,115),
     },
     "Green": {
         "bg":          (240, 250, 244),
@@ -94,6 +100,8 @@ SCHEMES = {
         "wed_bg": (52,168,108), "wed_nm":(218,248,230), "wed_dt":(218,248,230),
         "thu_bg": (8, 45, 32),  "thu_nm":(218,248,230), "thu_dt":(135,208,170),
         "fri_bg": (135,208,170),"fri_nm":(8,45,32),     "fri_dt":(14,72,52),
+        "sat_bg": (34,140,95),  "sat_nm":(218,248,230), "sat_dt":(165,228,192),
+        "sun_bg": (175,230,200),"sun_nm":(8,45,32),     "sun_dt":(14,72,52),
     },
     "Grayscale": {
         "bg":          (248, 248, 248),
@@ -111,14 +119,16 @@ SCHEMES = {
         "wed_bg": (108,108,108),"wed_nm":(242,242,242), "wed_dt":(242,242,242),
         "thu_bg": (18,18,18),   "thu_nm":(242,242,242), "thu_dt":(175,175,175),
         "fri_bg": (175,175,175),"fri_nm":(18,18,18),    "fri_dt":(32,32,32),
+        "sat_bg": (85,85,85),   "sat_nm":(242,242,242), "sat_dt":(205,205,205),
+        "sun_bg": (200,200,200),"sun_nm":(18,18,18),    "sun_dt":(32,32,32),
     },
 }
 
-DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 TYPE_LABELS = {
     "class":   "CLASS",
     "office":  "OFFICE HOURS",
     "due":     "ASSIGNMENT DUE",
+    "grading": "GRADING RETURNED",
     "noclass": "NO CLASS",
 }
 NOCLASS_LABELS = {
@@ -325,11 +335,13 @@ def _event_h(ev: dict, draw, cw: int, s: int) -> int:
             else:
                 tx += pw
         h += rows * pill_row_h + 5 * s  # rows + bottom margin
-    # subtitle: no-class reason, or cancelled-office reason
+    # subtitle: no-class reason, cancelled-office reason, or grading-returned note
     subtitle = None
     if slug == "noclass":
         subtitle = _noclass_subtitle(ev)
     elif cancelled and ev.get("note"):
+        subtitle = ev["note"]
+    elif slug == "grading" and ev.get("note"):
         subtitle = ev["note"]
     if subtitle:
         f11i = fnt(11, "italic", s)
@@ -418,11 +430,13 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
                         f9b, pill_bg, pill_bd, pill_txt, 10 * s, s) + pill_gap
         cy += row_h + 5 * s   # final row height + bottom margin
 
-    # ── Subtitle: No Class reason, or cancelled-Office Hours reason ────────
+    # ── Subtitle: No Class reason, cancelled-Office Hours reason, or Grading note ─
     subtitle = None
     if slug == "noclass":
         subtitle = _noclass_subtitle(ev)
     elif cancelled and ev.get("note"):
+        subtitle = ev["note"]
+    elif slug == "grading" and ev.get("note"):
         subtitle = ev["note"]
     if subtitle:
         f11i = fnt(11, "italic", s)
@@ -479,11 +493,12 @@ def render_graphic(data: dict, scale: int = 1, scheme: str = "Purple") -> Image.
     s = scale
     W = 480 * s
     c = {**BASE_C, **SCHEMES.get(scheme, SCHEMES["Purple"])}
+    days = list(data.get("days", {}).keys())
 
     # ── UK timezone abbreviation for this week (BST or GMT) ────────────────
     week_start = data.get("weekStart")
     uk_abbr = _uk_abbr(_date.fromisoformat(week_start)) if week_start else "UK"
-    for _d in DAYS:
+    for _d in days:
         for _ev in data["days"].get(_d, []):
             _ev["_ukAbbr"] = uk_abbr
 
@@ -501,9 +516,9 @@ def render_graphic(data: dict, scale: int = 1, scheme: str = "Purple") -> Image.
     week_h    = 30 * s
     footer_h  = 36 * s
     day_hs    = [max(_day_h(data["days"].get(d, []), sdraw, cw, s), 58 * s)
-                 for d in DAYS]
+                 for d in days]
     total_H   = (header_h + week_h + footer_h
-                 + day_pad * 2 + sum(day_hs) + day_gap * (len(DAYS) - 1))
+                 + day_pad * 2 + sum(day_hs) + day_gap * (len(days) - 1))
 
     # ── Actual canvas ────────────────────────────────────────────────────
     img  = Image.new("RGBA", (W, total_H), c["bg"])
@@ -533,7 +548,7 @@ def render_graphic(data: dict, scale: int = 1, scheme: str = "Purple") -> Image.
 
     # ── Days ─────────────────────────────────────────────────────────────
     day_y = header_h + week_h + day_pad
-    for idx, day in enumerate(DAYS):
+    for idx, day in enumerate(days):
         dh     = day_hs[idx]
         events = data["days"].get(day, [])
         slug   = day.lower()
