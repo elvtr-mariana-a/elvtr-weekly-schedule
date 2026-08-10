@@ -30,12 +30,14 @@ h1, h2, h3 { color: #e8e6f8 !important; }
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-EVENT_TYPES = ["class", "office", "due", "noclass"]
+FULL_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+WEEKDAY_DAYS = FULL_DAYS[:5]
+EVENT_TYPES = ["class", "office", "due", "grading", "noclass"]
 TYPE_LABELS = {
     "class":   "Class",
     "office":  "Office Hours",
     "due":     "Assignment Due",
+    "grading": "Grading Returned",
     "noclass": "No Class",
 }
 NOCLASS_TYPES = ["Federal Holiday", "Bank Holiday"]
@@ -95,19 +97,20 @@ def _preview_html(img) -> str:
 SCHEMES = ["Purple", "Blue", "Green", "Grayscale"]
 
 for _k, _v in [
-    ("events",      {d: [] for d in DAYS}),
-    ("course",      ""),
-    ("instructor",  ""),
-    ("channel",     "#help"),
-    ("footer_line", ""),
-    ("week_start",  None),
-    ("scheme",      "Purple"),
+    ("events",        {d: [] for d in FULL_DAYS}),
+    ("course",        ""),
+    ("instructor",    ""),
+    ("channel",       "#help"),
+    ("footer_line",   ""),
+    ("week_start",    None),
+    ("scheme",        "Purple"),
+    ("show_weekends", False),
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
 # Seed widget state for any already-saved events (page refresh / rerun)
-for _d in DAYS:
+for _d in FULL_DAYS:
     for _ev in st.session_state.events[_d]:
         _init_event_widgets(_ev)
 
@@ -159,7 +162,7 @@ with left:
                               value=st.session_state.week_start,
                               key="inp_week_start")
 
-    # Snap start → Monday of that week; end date (Friday) is derived, not entered
+    # Snap start → Monday of that week; end date (Fri/Sun) is derived, not entered
     if raw_start and raw_start != st.session_state.week_start:
         mon = raw_start - timedelta(days=raw_start.weekday())
         st.session_state.week_start = mon
@@ -167,11 +170,19 @@ with left:
     elif raw_start:
         st.session_state.week_start = raw_start
 
+    st.session_state.show_weekends = st.checkbox(
+        "Show weekends (Sat & Sun)",
+        value=st.session_state.show_weekends,
+        key="inp_show_weekends",
+    )
+
     st.markdown("---")
     st.markdown("### Schedule")
 
+    ACTIVE_DAYS = FULL_DAYS if st.session_state.show_weekends else WEEKDAY_DAYS
+
     # ── Day blocks ────────────────────────────────────────────────────────
-    for day in DAYS:
+    for day in ACTIVE_DAYS:
         with st.expander(day, expanded=True):
             events = st.session_state.events[day]
             action = None   # ("delete" | "up" | "down", index)
@@ -299,6 +310,14 @@ with left:
                         key=f"duetag_{eid}",
                     )
 
+                # ── Grading Returned note ─────────────────────────────────
+                if etype == "grading":
+                    ev["note"] = st.text_input(
+                        "Note (optional)",
+                        placeholder="e.g. Expect feedback within 5 business days",
+                        key=f"note_{eid}",
+                    )
+
                 # ── No Class reason + note ────────────────────────────────
                 if etype == "noclass":
                     ev["noClassType"] = st.selectbox(
@@ -313,8 +332,8 @@ with left:
                         key=f"note_{eid}",
                     )
 
-                # ── Times (not for No Class or cancelled Office Hours) ────
-                if etype != "noclass" and not office_cancelled:
+                # ── Times (not for No Class, Grading Returned, or cancelled Office Hours) ─
+                if etype not in ("noclass", "grading") and not office_cancelled:
                     tc1, tc2, tc3 = st.columns(3)
                     with tc1:
                         ev["timePT"] = st.text_input(
@@ -361,10 +380,12 @@ with right:
 
     def _build_data() -> dict:
         ws = st.session_state.week_start
-        we = ws + timedelta(days=4) if ws else None
+        span = 6 if st.session_state.show_weekends else 4
+        we = ws + timedelta(days=span) if ws else None
+        active_days = FULL_DAYS if st.session_state.show_weekends else WEEKDAY_DAYS
         # Pull all field values from session-state widget keys so they're current
         days_data = {}
-        for d in DAYS:
+        for d in active_days:
             evs = []
             for ev in st.session_state.events[d]:
                 eid = ev["id"]
