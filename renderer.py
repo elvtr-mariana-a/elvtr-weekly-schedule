@@ -141,6 +141,14 @@ def _noclass_subtitle(ev: dict) -> str:
     note = (ev.get("note") or "").strip()
     return f"{reason} — {note}" if note else reason
 
+OFFICE_BADGES = {"before": "Before class", "after": "After class"}
+
+def _office_badge(ev: dict) -> str | None:
+    """Timing badge for Office Hours; None for standalone sessions (own day)."""
+    if ev.get("type") != "office":
+        return None
+    return OFFICE_BADGES.get(ev.get("officeTiming", "before"))
+
 def _last_sunday(year: int, month: int):
     """The last Sunday of the given month (used for UK DST boundaries)."""
     next_first = _date(year + 1, 1, 1) if month == 12 else _date(year, month + 1, 1)
@@ -348,7 +356,7 @@ def _event_h(ev: dict, draw, cw: int, s: int) -> int:
         h += _lh(draw, f11i) * len(_wrap(subtitle, f11i, cw - indent, draw)) + 2 * s
     has_time = (not cancelled) and (
                 ev.get("timePT") or ev.get("timeET") or ev.get("timeUK") or
-                slug == "office" or
+                _office_badge(ev) or
                 (slug == "due" and ev.get("dueTag") in ("Extra Credit", "Ungraded")))
     if has_time:
         h += _lh(draw, fnt(11, "regular", s)) + 3 * s
@@ -463,8 +471,9 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
         "Extra Credit": ("EXTRA CREDIT", c["badge_ec_bd"],        c["badge_ec_txt"]),
         "Ungraded":     ("UNGRADED",     c["badge_ungraded_bd"],  c["badge_ungraded_txt"]),
     }
+    office_badge = _office_badge(ev)
     has_time = (not cancelled) and bool(
-                    time_str or slug == "office" or due_tag in due_badges)
+                    time_str or office_badge or due_tag in due_badges)
 
     if has_time:
         tx = cx + indent
@@ -475,11 +484,8 @@ def _draw_event(draw, img, ev, cx, cy, cw, s, c) -> int:
         if time_str:
             draw.text((tx, cy), time_str, font=f11, fill=c["time_txt"])
             tx += int(draw.textlength(time_str, font=f11)) + 6 * s
-        if slug == "office":
-            # plain ASCII-safe label — no emoji arrows
-            timing = ev.get("officeTiming", "before")
-            badge_txt = "Before class" if timing == "before" else "After class"
-            _badge(draw, img, badge_txt, (tx, cy), f9b,
+        if office_badge:
+            _badge(draw, img, office_badge, (tx, cy), f9b,
                    (*c["badge_office_bd"], 30),
                    c["badge_office_bd"], c["badge_office_txt"], 10 * s, s)
         cy += lh11 + 3 * s
