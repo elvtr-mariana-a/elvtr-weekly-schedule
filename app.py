@@ -285,7 +285,7 @@ with left:
                     else:
                         st.markdown("<span style='font-size:12px;color:#8884aa'>Timing</span>",
                                     unsafe_allow_html=True)
-                        tb1, tb2 = st.columns(2)
+                        tb1, tb2, tb3 = st.columns(3)
                         with tb1:
                             if st.button(
                                 "⬆ Before class", key=f"before_{eid}",
@@ -299,6 +299,14 @@ with left:
                                 type="primary" if ev["officeTiming"] == "after" else "secondary",
                             ):
                                 ev["officeTiming"] = "after"
+                                st.rerun()
+                        with tb3:
+                            # Office Hours on a day with no class — no before/after badge
+                            if st.button(
+                                "● Standalone", key=f"standalone_{eid}",
+                                type="primary" if ev["officeTiming"] == "standalone" else "secondary",
+                            ):
+                                ev["officeTiming"] = "standalone"
                                 st.rerun()
 
                 # ── Assignment tag: None / Extra Credit / Ungraded ────────
