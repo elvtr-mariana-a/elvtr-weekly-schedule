@@ -136,9 +136,11 @@ NOCLASS_LABELS = {
     "Bank Holiday":    "Bank Holiday",
 }
 
-def _noclass_subtitle(ev: dict) -> str:
-    reason = NOCLASS_LABELS.get(ev.get("noClassType"), ev.get("noClassType") or "Federal Holiday")
+def _noclass_subtitle(ev: dict) -> str | None:
     note = (ev.get("note") or "").strip()
+    if ev.get("noClassType") == "No reason":
+        return note or None                         # no reason label; note alone, if any
+    reason = NOCLASS_LABELS.get(ev.get("noClassType"), ev.get("noClassType") or "Federal Holiday")
     return f"{reason} — {note}" if note else reason
 
 OFFICE_BADGES = {"before": "Before class", "after": "After class"}
