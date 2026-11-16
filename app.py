@@ -40,7 +40,7 @@ TYPE_LABELS = {
     "grading": "Grading Returned",
     "noclass": "No Class",
 }
-NOCLASS_TYPES = ["Federal Holiday", "Bank Holiday"]
+NOCLASS_TYPES = ["Federal Holiday", "Bank Holiday", "No reason"]
 DUE_TAGS = ["None", "Extra Credit", "Ungraded"]
 
 # ---------------------------------------------------------------------------
